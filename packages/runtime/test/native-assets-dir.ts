@@ -421,13 +421,14 @@ try {
   assert.equal(r.status, 404);
   assert.equal(text(r), "Not Found");
 
-  // -- a missing or malformed manifest is an error each time, and the worker recovers when it is back
+  // -- no manifest at all (an empty view: no assets deployed) is a 404 for every path; a malformed one is an error each
+  //    time; the worker recovers when the manifest is back
   const keep = readFileSync(join(view, "manifest.json"));
   rmSync(join(view, "manifest.json"));
   for (let i = 0; i < 2; i++) {
     r = await dir("/index.html");
-    assert.equal(r.status, 500);
-    assert(text(r).startsWith("ERR sproutboat assets"), text(r));
+    assert.equal(r.status, 404);
+    assert.equal(text(r), "Not Found");
   }
   writeManifest("none", "{not json");
   for (let i = 0; i < 2; i++) assert.equal((await dir("/index.html")).status, 500, "a malformed manifest");

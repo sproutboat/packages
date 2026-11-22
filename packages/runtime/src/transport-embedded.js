@@ -7544,7 +7544,9 @@ let __sbAssetDirMan = null;
 function __sbAssetDirManifest(dir) {
   for (let attempt = 0; attempt < 3; attempt++) {
     const s = __sbAssetsOp(0, dir, "", 0, null);
-    if (s < 0) throw new Error("sproutboat assets: manifest.json cannot be read (" + (s === -2 ? "over 4 MiB" : "missing") + ")");
+    if (s === -2) throw new Error("sproutboat assets: manifest.json is over 4 MiB");
+    // No manifest.json: the app's view is empty (no assets deployed), so every path is a 404, as with an empty assets directory.
+    if (s < 0) return { files: {} };
     if (s % 2 === 0 && __sbAssetDirMan !== null) return __sbAssetDirMan;
     const view = new Uint8Array((s - (s % 2)) / 2);
     const n = __sbAssetsOp(1, dir, "", 0, view);
