@@ -3457,14 +3457,18 @@ if (globalThis.caches == null) {
       response.headers.forEach((value, name) => {
         headers[name] = value;
       });
-      __sbRpc("cache.put", {
-        name: this._name,
-        key: __sbCacheKey(request),
-        status: response.status,
-        headers,
-        body: response.text(),
-      });
-      return undefined;
+      const name = this._name;
+      const key = __sbCacheKey(request);
+      const status = response.status;
+      const store = (body) => {
+        __sbRpc("cache.put", { name, key, status, headers, body });
+        return undefined;
+      };
+      // A streamed body (a large blob-backed asset from env.ASSETS) reads as a Promise of the text: store it once it has
+      // arrived (a Promise in the RPC would be JSON-serialized as {}). Every other body is a string, stored at once.
+      const text = response.text();
+      if (text instanceof Promise) return text.then(store);
+      return store(text);
     }
     delete(request) {
       return !!__sbRpc("cache.delete", { name: this._name, key: __sbCacheKey(request) }).deleted;
@@ -11454,7 +11458,34 @@ function __sbAssetHeaderMatches(pattern, path) {
   return from.length === parts.length;
 }
 
-function __sbAssetResponse(path, r) {
+// From compatibility date 2026-11-22 env.<ASSETS>.fetch honours If-None-Match: the header of the Request, or of init when
+// it has one (as new Request(input, init) takes it). null before the date, or without the header.
+function __sbAssetInm(input, init) {
+  if (!(__sbCompatDate() >= "2026-11-22")) return null;
+  const h = init && init.headers != null ? init.headers : input && !__sbIsStr(input) ? input.headers : null;
+  return h == null ? null : new Headers(h).get("if-none-match");
+}
+// `*` (the whole field value), or a comma list of entity tags, each optionally weak (W/), against the file's tag "<hash>".
+// A comma inside a quoted tag belongs to the tag (RFC 9110 allows it), so the list is split outside the quotes only.
+function __sbAssetNoneMatch(inm, hash) {
+  if (inm.trim() === "*") return true;
+  const want = '"' + hash + '"';
+  let quoted = false;
+  let start = 0;
+  for (let i = 0; i <= inm.length; i++) {
+    const c = i < inm.length ? inm.charAt(i) : ",";
+    if (c === '"') quoted = !quoted;
+    else if (c === "," && !quoted) {
+      let tag = inm.slice(start, i).trim();
+      start = i + 1;
+      if (tag.startsWith("W/")) tag = tag.slice(2);
+      if (tag === want) return true;
+    }
+  }
+  return false;
+}
+
+function __sbAssetResponse(path, r, inm) {
   if (r.location != null) return new Response(null, { status: r.status, headers: { location: r.location } });
   const rules = r.rules || {};
   const redirect = __sbFindAssetRedirect(rules.redirects || [], path);
@@ -11472,9 +11503,21 @@ function __sbAssetResponse(path, r) {
       for (let j = 0; j < rule.set.length; j++) headers.set(rule.set[j][0], rule.set[j][1]);
     }
   }
+  // The file matches the caller's copy: 304 with the tag and the rules' headers, and its body is never read.
+  if (inm != null && r.found && __sbAssetNoneMatch(inm, r.hash)) return new Response(null, { status: 304, headers });
+  let body = r.body;
+  // A body in the Cloud asset store (`blob`: its hash) is read now: whole as a bytestring, or a stream of chunks.
+  if (r.blob != null) {
+    const read = globalThis.__sbAssetsBody(r.blob);
+    if (read.stream !== undefined) {
+      headers.set("content-length", String(read.length));
+      return new Response(read.stream, { status: r.status || (r.found ? 200 : 404), headers });
+    }
+    body = read.body;
+  }
   // Apply the internal byte marker after user rules so they cannot remove it.
-  if (r.body != null) headers.set("x-sb-raw-body", "1");
-  return __sbRawBodyResponse(r.body, { status: r.status || (r.found ? 200 : 404), headers });
+  if (body != null) headers.set("x-sb-raw-body", "1");
+  return __sbRawBodyResponse(body, { status: r.status || (r.found ? 200 : 404), headers });
 }
 
 // Installed only when the project declares bindings. `env` is the module-scoped
@@ -12027,14 +12070,14 @@ globalThis.__sbInstallBindings = function (target, bindings) {
   // body byte-preserving for binary assets.
   if (bindings.assets) {
     target[bindings.assets] = {
-      fetch(input) {
+      fetch(input, init) {
         let path = __sbIsStr(input) ? input : String((input && input.url) || "/");
         try {
           path = new URL(path, "http://a").pathname;
         } catch {
           /* use as-is */
         }
-        return __sbAssetResponse(path, globalThis.__sbAssetsGet(path));
+        return __sbAssetResponse(path, globalThis.__sbAssetsGet(path), __sbAssetInm(input, init));
       },
     };
   }

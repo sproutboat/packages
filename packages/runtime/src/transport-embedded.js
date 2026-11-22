@@ -2923,6 +2923,73 @@ static long sb_r2_read_into_c(const char* path, const char* bucket, const char* 
   return bad ? -1 : (long)rd;
 }
 
+// Static assets served from the per-deployment view the host gives the worker (SB_ASSETS_DIR): DIR/manifest.json and
+// DIR/blobs/<sha256 hex>. Nothing else is ever opened. A blob name is exactly 64 lowercase hex (checked here as well as in
+// JS), "blobs" and the file are opened with O_NOFOLLOW, and only a regular file is read, so no name from the app or the
+// request can reach a path outside the view.
+static int sb_assets_hex(const char* h) {
+  for (int i = 0; i < 64; i++)
+    if (!((h[i] >= '0' && h[i] <= '9') || (h[i] >= 'a' && h[i] <= 'f'))) return 0;
+  return h[64] == 0;
+}
+static int sb_assets_open(const char* dir, const char* name, struct stat* st) {
+  int dfd = open(dir, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  if (dfd < 0) return -1;
+  int fd = -1;
+  if (!name[0]) fd = openat(dfd, "manifest.json", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+  else if (sb_assets_hex(name)) {
+    int bfd = openat(dfd, "blobs", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (bfd >= 0) {
+      fd = openat(bfd, name, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+      close(bfd);
+    }
+  }
+  close(dfd);
+  if (fd >= 0 && (fstat(fd, st) || !S_ISREG(st->st_mode))) {
+    close(fd);
+    fd = -1;
+  }
+  return fd;
+}
+static long sb_assets_pread(int fd, char* out, size_t cap, size_t off) {
+  size_t got = 0;
+  while (got < cap) {
+    ssize_t n = pread(fd, out + got, cap - got, (off_t)(off + got));
+    if (n < 0) {
+      if (errno == EINTR) continue;
+      return -1;
+    }
+    if (n == 0) break;
+    got += (size_t)n;
+  }
+  return (long)got;
+}
+// The stat key (inode, size, mtime in ns) of the manifest this worker last read: the parsed manifest is kept in JS and
+// read again only when the file's key is another one.
+static uint64_t sb_assets_read_key[3];
+// op 0: the manifest's size * 2 + 1 when its key is not the one last read, size * 2 when it is (-2: over 4 MiB);
+// op 1: read the manifest (exactly CAP bytes = its size, else -3) into OUT and remember its key;
+// op 2: the size of blob NAME; op 3: read at most CAP bytes of blob NAME at OFF into OUT, the count read.
+// -1 for anything that cannot be opened or read.
+static long sb_assets_op(int op, const char* dir, const char* name, size_t off, char* out, size_t cap) {
+  if (op >= 2 && !name[0]) return -1;
+  struct stat st;
+  int fd = sb_assets_open(dir, op < 2 ? "" : name, &st);
+  if (fd < 0) return -1;
+  long r;
+  if (op < 2) {
+    uint64_t k[3] = { (uint64_t)st.st_ino, (uint64_t)st.st_size, SB_LTX_MTIME_NS(st) };
+    if (st.st_size > 4 * 1024 * 1024) r = -2;
+    else if (op == 0) r = (long)st.st_size * 2 + (memcmp(k, sb_assets_read_key, sizeof(k)) != 0);
+    else if ((size_t)st.st_size != cap) r = -3;
+    else if ((r = sb_assets_pread(fd, out, cap, 0)) == (long)cap) memcpy(sb_assets_read_key, k, sizeof(k));
+    else r = -1;
+  } else if (op == 2) r = (long)st.st_size;
+  else r = sb_assets_pread(fd, out, cap, off);
+  close(fd);
+  return r;
+}
+
 // Best-effort: a metadata row deleted with no blob file (or vice versa) is
 // still a correct end state, so a missing file here is not an error.
 static void sb_r2_delete_blob(const char* path, const char* bucket, const char* key, const char* generation) {
@@ -6529,60 +6596,17 @@ function __sbEmbeddedDispatch(msg) {
   }
 
   if (op === "assets.get") {
-    // Assets are baked into the module by the build (wrap.ts), so a standalone
-    // binary serves them with nothing beside it on disk. Same resolution rules
-    // as src/assets.ts and the same reply shape as the broker.
+    // Baked into the module by the build (wrap.ts): a standalone binary serves them with nothing beside it on
+    // disk. Otherwise, where the host gave this worker a view of the asset store (SB_ASSETS_DIR), from there.
+    // One resolver (__sbAssetPick) for both; same reply shape as the broker.
     const bundle = globalThis.__sbAssets;
+    if (__sbAssetsFromDir()) return __sbAssetDirPick(__sbEnv("SB_ASSETS_DIR"), msg.path);
     if (!bundle) throw new Error("assets not bound");
     const files = bundle.files || {};
-    const meta = (bundle.manifest && bundle.manifest.files) || {};
-    let path = String(msg.path || "/");
-    if (path.charAt(0) !== "/") path = "/" + path;
-    const redirects = (bundle.manifest && bundle.manifest.redirects) || [];
-    const redirect = __sbFindAssetRedirect(redirects, path);
-    if (redirect !== null) return { ok: true, found: false, status: redirect.status, location: redirect.location };
-
-    let key = null;
-    if (path.charAt(path.length - 1) === "/") {
-      const index = path + "index.html";
-      if (files[index] != null) key = index;
-    } else if (files[path] != null) {
-      key = path;
-    } else {
-      const base = path.slice(path.lastIndexOf("/") + 1);
-      if (base.indexOf(".") === -1) {
-        if (files[path + ".html"] != null) key = path + ".html";
-        else if (files[path + "/index.html"] != null) key = path + "/index.html";
-      }
-    }
-    if (key != null) {
-      const info = meta[key] || {};
-      return {
-        ok: true,
-        found: true,
-        status: 200,
-        type: info.type,
-        hash: info.hash,
-        body: files[key],
-      };
-    }
-    const nfh = (bundle.manifest && bundle.manifest.notFound) || "none";
-    if (nfh === "single-page-application" && files["/index.html"] != null) {
-      const info = meta["/index.html"] || {};
-      return {
-        ok: true,
-        found: true,
-        status: 200,
-        type: info.type,
-        hash: info.hash,
-        body: files["/index.html"],
-      };
-    }
-    if (nfh === "404-page" && files["/404.html"] != null) {
-      const info = meta["/404.html"] || {};
-      return { ok: true, found: false, status: 404, type: info.type, body: files["/404.html"] };
-    }
-    return { ok: true, found: false, status: 404, body: "Not Found" };
+    const reply = __sbAssetPick(bundle.manifest, files, msg.path);
+    if (reply.key != null) reply.body = files[reply.key];
+    else if (reply.location == null) reply.body = "Not Found";
+    return reply;
   }
 
   // A service-binding call (compatibility date 2026-11-18): the host the app runs on routes it to the
@@ -7426,9 +7450,211 @@ globalThis.__sbFetchUpstream = function (op, msg) {
   return __sbRpc(op, msg);
 };
 
+// The resolution of assets.get, one function for the baked and the directory assets so they cannot diverge:
+// redirects, an exact file, a trailing "/" -> index.html, an extensionless path -> ".html" then "/index.html", then the
+// manifest's notFound ("single-page-application": /index.html, "404-page": /404.html). FILES is what a path is looked up
+// in (baked: the file bytes; directory: the manifest's entries). The reply carries the matched `key` and never a body.
+function __sbAssetFindKey(files, path) {
+  if (path.charAt(path.length - 1) === "/") {
+    const index = path + "index.html";
+    return files[index] != null ? index : null;
+  }
+  if (files[path] != null) return path;
+  const base = path.slice(path.lastIndexOf("/") + 1);
+  if (base.indexOf(".") === -1) {
+    if (files[path + ".html"] != null) return path + ".html";
+    if (files[path + "/index.html"] != null) return path + "/index.html";
+  }
+  return null;
+}
+// The request path with its percent-escapes decoded, as Cloudflare's asset lookup does, so "/caf%C3%A9.txt" finds the file
+// "/café.txt". null when the decoded name could mean something else than a file name: a malformed escape, an escape that
+// decodes to "/", "\\" or a control character (so "%2F" can never add a path segment), or a segment that decodes to "." or
+// "..". Such a path is looked up as written only, never as a decoded name.
+function __sbAssetDecodePath(path) {
+  if (path.indexOf("%") === -1) return null;
+  const parts = path.split("/");
+  for (let i = 0; i < parts.length; i++) {
+    const seg = parts[i];
+    if (seg.indexOf("%") === -1) continue;
+    let d = "";
+    try {
+      d = decodeURIComponent(seg);
+    } catch (e) {
+      return null;
+    }
+    if (d === "." || d === "..") return null;
+    for (let j = 0; j < d.length; j++) {
+      const c = d.charCodeAt(j);
+      if (c < 32 || c === 47 || c === 92 || c === 127) return null;
+    }
+    parts[i] = d;
+  }
+  return parts.join("/");
+}
+function __sbAssetPick(manifest, files, rawPath) {
+  let path = String(rawPath || "/");
+  if (path.charAt(0) !== "/") path = "/" + path;
+  const man = manifest || {};
+  const meta = man.files || {};
+  const redirect = __sbFindAssetRedirect(man.redirects || [], path);
+  if (redirect !== null) return { ok: true, found: false, status: redirect.status, location: redirect.location };
+
+  // The decoded name first; then the path as written (a file whose name has a literal "%20" in it keeps working).
+  const decoded = __sbAssetDecodePath(path);
+  let key = decoded !== null ? __sbAssetFindKey(files, decoded) : null;
+  if (key === null) key = __sbAssetFindKey(files, path);
+  if (key != null) {
+    const info = meta[key] || {};
+    return { ok: true, found: true, status: 200, type: info.type, hash: info.hash, key };
+  }
+  const nfh = man.notFound || "none";
+  if (nfh === "single-page-application" && files["/index.html"] != null) {
+    const info = meta["/index.html"] || {};
+    return { ok: true, found: true, status: 200, type: info.type, hash: info.hash, key: "/index.html" };
+  }
+  if (nfh === "404-page" && files["/404.html"] != null) {
+    const info = meta["/404.html"] || {};
+    return { ok: true, found: false, status: 404, type: info.type, key: "/404.html" };
+  }
+  return { ok: true, found: false, status: 404 };
+}
+
+// Which assets this worker serves, decided once: the files baked into the module when there are any; otherwise, where the host gave the worker a
+// view of the asset store (SB_ASSETS_DIR), that. A Cloud deploy whose files did not fit in the module still bakes the SETTINGS (notFound,
+// runSproutFirst, no files), so "something is baked" is not enough: a bundle with no files at all is the same as none.
+let __sbAssetMode = 0;
+function __sbAssetsFromDir() {
+  if (__sbAssetMode === 0) {
+    const b = globalThis.__sbAssets;
+    let baked = false;
+    if (b) {
+      const f = b.files;
+      if (f && Object.keys(f).length > 0) baked = true;
+    }
+    __sbAssetMode = baked || !__sbEnv("SB_ASSETS_DIR") ? 1 : 2;
+  }
+  return __sbAssetMode === 2;
+}
+// Directory assets (SB_ASSETS_DIR): exactly 64 lowercase hex, as sb_assets_hex checks in C.
+function __sbAssetHashOk(hash) {
+  if (!__sbIsStr(hash) || hash.length !== 64) return false;
+  for (let i = 0; i < 64; i++) {
+    const c = hash.charCodeAt(i);
+    if (!((c >= 48 && c <= 57) || (c >= 97 && c <= 102))) return false;
+  }
+  return true;
+}
+// The first argument of sb_assets_op (0 stat the manifest, 1 read it, 2 size of a blob, 3 read a blob range); VIEW is the
+// Uint8Array to fill for 1 and 3. Returns the C result: negative when it failed.
+// oxlint-disable-next-line no-unused-vars -- read inside the RawC block below, not by JS.
+function __sbAssetsOp(op, dir, name, offset, view) {
+  let got = -1;
+  // oxlint-disable-next-line no-unused-expressions -- Porffor.c`...` is inline C the compiler consumes, not a JS expression.
+  Porffor.c`
+    const char* __d; size_t __dl; char* __do = 0;
+    porf_native_fetch_read_value(dir, &__d, &__dl, &__do);
+    char* __dir = (char*)malloc(__dl + 1); memcpy(__dir, __d, __dl); __dir[__dl] = 0;
+    if (__do) free(__do);
+
+    const char* __nm; size_t __nl; char* __no = 0;
+    porf_native_fetch_read_value(name, &__nm, &__nl, &__no);
+    char* __name = (char*)malloc(__nl + 1); memcpy(__name, __nm, __nl); __name[__nl] = 0;
+    if (__no) free(__no);
+
+    long __n = -1;
+    const int __op = (int)op;
+    char* __out = 0; size_t __cap = 0; int __ok = 1;
+    if (__op == 1 || __op == 3) {
+      __ok = 0;
+      if (view.type == 81 && *(int32_t*)(MEM + (u32)view.val) >= 0) {
+        const u32 __ta = (u32)view.val;
+        __cap = (size_t)*(int32_t*)(MEM + __ta);
+        __out = (char*)(MEM + *(u32*)(MEM + __ta + 4) + 4);
+        __ok = 1;
+      }
+    }
+    if (__ok && offset.type == 1 && offset.val >= 0) __n = sb_assets_op(__op, __dir, __name, (size_t)offset.val, __out, __cap);
+    free(__dir); free(__name);
+    got = (f64)__n;
+  `;
+  return got;
+}
+// The parsed manifest.json of the view, cached per worker and read again only when its stat key changes (an assets-only
+// deploy swaps the file, and the worker keeps running). One stat per fetch.
+let __sbAssetDirMan = null;
+function __sbAssetDirManifest(dir) {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const s = __sbAssetsOp(0, dir, "", 0, null);
+    if (s === -2) throw new Error("sproutboat assets: manifest.json is over 4 MiB");
+    // No manifest.json: the app's view is empty (no assets deployed), so every path is a 404, as with an empty assets directory.
+    // The manifest of an earlier read must not outlive the file (its redirects and headers would still apply).
+    if (s < 0) {
+      __sbAssetDirMan = null;
+      return { files: {} };
+    }
+    if (s % 2 === 0 && __sbAssetDirMan !== null) return __sbAssetDirMan;
+    const view = new Uint8Array((s - (s % 2)) / 2);
+    const n = __sbAssetsOp(1, dir, "", 0, view);
+    // Swapped between the stat and the read: look again.
+    if (n === -3) continue;
+    if (n < 0) throw new Error("sproutboat assets: manifest.json cannot be read");
+    __sbAssetDirMan = null;
+    const man = JSON.parse(new TextDecoder().decode(view));
+    if (Object(man) !== man || Object(man.files) !== man.files)
+      throw new Error("sproutboat assets: manifest.json is not an asset manifest");
+    __sbAssetDirMan = man;
+    return man;
+  }
+  throw new Error("sproutboat assets: manifest.json keeps changing");
+}
+// assets.get from the directory: the same reply as the baked one but for the body, which is named by `blob` (the
+// file's hash) and read by __sbAssetsBody only if the response needs it (a 304 reads nothing).
+function __sbAssetDirPick(dir, path) {
+  const man = __sbAssetDirManifest(dir);
+  const reply = __sbAssetPick(man, man.files, path);
+  if (reply.key != null) {
+    const entry = man.files[reply.key];
+    if (!__sbAssetHashOk(entry.hash)) throw new Error("sproutboat assets: " + reply.key + " has no valid hash in manifest.json");
+    reply.blob = entry.hash;
+  } else if (reply.location == null) reply.body = "Not Found";
+  return reply;
+}
+// A file this size or smaller is read whole into the raw bytestring body the baked assets have; a larger one is a
+// stream of __SB_R2_CHUNK reads with a content-length, so it is never in the worker's memory whole.
+const __SB_ASSET_WHOLE = 1024 * 1024;
+globalThis.__sbAssetsBody = function (hash) {
+  const dir = __sbEnv("SB_ASSETS_DIR");
+  const size = __sbAssetsOp(2, dir, hash, 0, null);
+  if (size < 0) throw new Error("sproutboat assets: the file " + hash + " cannot be read");
+  if (size <= __SB_ASSET_WHOLE) {
+    const view = new Uint8Array(size);
+    if (__sbAssetsOp(3, dir, hash, 0, view) !== size) throw new Error("sproutboat assets: the file " + hash + " cannot be read");
+    return { body: __sbToBytes(view) };
+  }
+  let at = 0;
+  const stream = new ReadableStream({
+    pull(controller) {
+      if (at >= size) {
+        controller.close();
+        return;
+      }
+      const n = Math.min(__SB_R2_CHUNK, size - at);
+      const chunk = new Uint8Array(n);
+      if (__sbAssetsOp(3, dir, hash, at, chunk) !== n) {
+        controller.error(new Error("sproutboat assets: the file " + hash + " cannot be read"));
+        return;
+      }
+      at += n;
+      controller.enqueue(chunk);
+    },
+  });
+  return { stream, length: size };
+};
+
 globalThis.__sbAssetsGet = function (path) {
   const reply = __sbEmbeddedDispatch({ op: "assets.get", path });
-  const manifest = globalThis.__sbAssets.manifest || {};
+  const manifest = (__sbAssetsFromDir() ? __sbAssetDirMan : globalThis.__sbAssets ? globalThis.__sbAssets.manifest : null) || {};
   reply.rules = { headers: manifest.headers || [], redirects: manifest.redirects || [] };
   return reply;
 };
