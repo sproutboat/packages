@@ -23,6 +23,14 @@ test("contentType maps known extensions, defaults to octet-stream", () => {
   expect(contentType("noext")).toBe("application/octet-stream");
 });
 
+test("contentType maps .md and .markdown to text/markdown, whatever the case", () => {
+  expect(contentType("README.md")).toBe("text/markdown; charset=utf-8");
+  expect(contentType("/docs/guide.markdown")).toBe("text/markdown; charset=utf-8");
+  expect(contentType("CHANGELOG.MD")).toBe("text/markdown; charset=utf-8");
+  expect(contentType("notes.md.txt")).toBe("text/plain; charset=utf-8");
+  expect(contentType("md")).toBe("application/octet-stream");
+});
+
 test("isSproutFirst: boolean short-circuits; patterns match with negation", () => {
   expect(isSproutFirst(true, "/anything")).toBe(true);
   expect(isSproutFirst(false, "/anything")).toBe(false);
