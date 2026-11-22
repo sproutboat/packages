@@ -77,8 +77,8 @@ test("every patch says what, why and its class; upstream bugs link their issue; 
     expect(message, `${name}: a body, not only a subject`).toMatch(/^Subject: .+\n(.+\n)*\n\S/m);
     expect(message, name).toMatch(/^Pass: .+$/m);
     if (cls === "generated") generated++;
-    // The one upstream-class pass with no issue is repeat (nothing to report: it is linear upstream).
-    if (cls === "upstream" && !name.includes("repeat"))
+    // Upstream-class passes with no issue: repeat (nothing to report: it is linear upstream) and the ones whose trailer says `Upstream: not filed`.
+    if (cls === "upstream" && !name.includes("repeat") && !/^Upstream: not filed$/m.test(message))
       expect(message, `${name}: an upstream issue link`).toMatch(
         /^Upstream: https:\/\/github\.com\/CanadaHonk\/porffor\/issues\/\d+$/m,
       );

@@ -1,7 +1,7 @@
 # Porffor patches against upstream
 
 The patch series is the source of truth: `packages/toolchain/porffor-patches/`, a `git format-patch` series of
-27 patches against ONE upstream commit, [CanadaHonk/porffor](https://github.com/CanadaHonk/porffor)
+28 patches against ONE upstream commit, [CanadaHonk/porffor](https://github.com/CanadaHonk/porffor)
 `c9af40c` (tag `alpha-25`, 2026-11-17). The toolchain supports one Porffor alpha at a time. This file is the index.
 
 What ships is the patched tree: `vendor/porffor-patched.tar.gz` (the commit with the series applied) and
@@ -60,9 +60,10 @@ Applied in this order. Every patch has what and why in its commit message.
 | [`0024-codegen-the-right-operand-of-and-is-generated-as-a-b.patch`](porffor-patches/0024-codegen-the-right-operand-of-and-is-generated-as-a-b.patch) | logical right operand is a branch (P13) | upstream | [#456](https://github.com/CanadaHonk/porffor/issues/456), open, same bug (filed by us 2026-11-08) | in a function, `let o = 1; o \|\| (o = {}); typeof o` answers `"object"` |
 | [`0025-date-Date.parse-takes-HH-and-HHmm-offsets-as-well-as.patch`](porffor-patches/0025-date-Date.parse-takes-HH-and-HHmm-offsets-as-well-as.patch) | `Date.parse` offsets (P12) | upstream | [#455](https://github.com/CanadaHonk/porffor/issues/455), open, same bug (filed by us 2026-11-08). The colon form was [#387](https://github.com/CanadaHonk/porffor/issues/387), ours, closed | `new Date("2026-11-08 14:48:19.097+00")` and `...+0000` are `NaN` |
 | [`0026-security-compiled-code-may-not-name-the-compiler-s-i.patch`](porffor-patches/0026-security-compiled-code-may-not-name-the-compiler-s-i.patch) | refuse the compiler's intrinsics in compiled app code (`refuse.js`) | ours | none needed | `Porffor.c` templates go verbatim into the C output and the other `Porffor.*` / `__Name_x` intrinsics are as raw; the identifiers `Porffor` and `__Name_x` are refused on the AST of every module that is not the entry, the runtime or the shared prelude, and of every compile-time `eval`, `Function` and `vm` source; the error carries `SB_INPUT_REFUSED`; `--sb-allow-intrinsics` for the platform's own template compile |
-| [`0027-builtins-regenerate-compiler-builtins_precompiled.js.patch`](porffor-patches/0027-builtins-regenerate-compiler-builtins_precompiled.js.patch) | regenerated `builtins_precompiled.js` | generated | n/a | the precompiled builtin table, which upstream tracks; `apply` skips this patch and regenerates it, `verify` fails when it is stale |
+| [`0027-codegen-block-function-declarations-reach-a-fixpoint.patch`](porffor-patches/0027-codegen-block-function-declarations-reach-a-fixpoint.patch) | block function order (P15) | upstream | not filed (the coordinator decides; minimal repro in packages #299) | a strict block moves each function declaration up to just before its first use in ONE pass; a function moved up can mention one the pass had already left alone, so a callee ends behind its caller, is not declared when the caller generates its nested closures, is never marked referenced and is dropped: the call throws a TypeError with no message. Alchemy v2 Workers hit it |
+| [`0028-builtins-regenerate-compiler-builtins_precompiled.js.patch`](porffor-patches/0028-builtins-regenerate-compiler-builtins_precompiled.js.patch) | regenerated `builtins_precompiled.js` | generated | n/a | the precompiled builtin table, which upstream tracks; `apply` skips this patch and regenerates it, `verify` fails when it is stale |
 
-Counts: 26 patches + 1 generated: 12 upstream (11 passes; 10 with an issue, #454 to #457 and #459 to #464, all open with no fix or PR), 14 ours.
+Counts: 27 patches + 1 generated: 13 upstream (12 passes; 10 with an issue, #454 to #457 and #459 to #464, all open with no fix or PR; P15 is not filed), 14 ours.
 No upstream PR covers any of them; Porffor's AI policy does not allow LLM-written PR text, so any PR needs a human-written description.
 
 ## Upgrading to a new alpha
