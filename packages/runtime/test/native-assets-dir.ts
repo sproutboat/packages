@@ -13,7 +13,10 @@ import { EMPTY_BINDINGS, preludePath, TRANSPORT_MARKER, transportPath, wrapNativ
 //   2. a dir-mode app: found / index.html / extensionless / SPA / 404 page / redirects / headers / bytes (whole and streamed,
 //      byte-exact) / a manifest swapped under a running worker / missing and malformed files / hashes that try to leave the view;
 //   3. conditional requests (If-None-Match against "<hash>": list, W/, *, no match) from a Request, init and a bare path, with
-//      a compatibility date before 2026-11-22 left as it was, and the same on baked assets.
+//      a compatibility date before 2026-11-22 left as it was, and the same on baked assets;
+//   4. request paths are percent-decoded before the manifest lookup (non-ASCII names; a malformed escape is a 404, a decoded "/"
+//      adds no segment), a streamed asset can be put in the Cache API and read back byte-exact, and a removed manifest takes its
+//      redirects with it.
 const work = mkdtempSync(join(tmpdir(), "sb-native-assets-dir-"));
 const procs: ReturnType<typeof Bun.spawn>[] = [];
 const sha = (b: Buffer | string) => createHash("sha256").update(b).digest("hex");
@@ -174,6 +177,17 @@ const handler = `export default {
     const p = url.searchParams.get("p");
     const inm = url.searchParams.get("inm");
     const via = url.searchParams.get("via") || "request";
+    // cache=put: the ASSETS response goes into caches.default under /c/<k>; cache=get: what the cache holds for it.
+    const cache = url.searchParams.get("cache");
+    if (cache === "put") {
+      const res = await env.ASSETS.fetch(new Request("http://x" + p));
+      await caches.default.put(new Request("http://x/c/" + url.searchParams.get("k")), res);
+      return new Response("stored " + res.status);
+    }
+    if (cache === "get") {
+      const hit = await caches.default.match("http://x/c/" + url.searchParams.get("k"));
+      return hit ? new Response(hit.body, { status: 200, headers: { "x-cache": "hit" } }) : new Response("MISS", { status: 404 });
+    }
     const h = inm == null ? {} : { "if-none-match": inm };
     try {
       // meta=1: what the ASSETS response itself carries (the server sends streamed bodies chunked and drops content-length).
@@ -216,6 +230,12 @@ put("/about.html", "<h1>about</h1>", "text/html; charset=utf-8");
 put("/docs/index.html", "<h1>docs</h1>", "text/html; charset=utf-8");
 put("/app.css", "body{color:red}", "text/css; charset=utf-8");
 put("/404.html", "<h1>nothing here</h1>", "text/html; charset=utf-8");
+put("/café.txt", "accent", "text/plain; charset=utf-8");
+put("/lit%20eral.txt", "literal percent", "text/plain; charset=utf-8");
+// Over the 1 MiB whole-read limit, so env.ASSETS streams it; valid UTF-8 with multi-byte characters (the Cache API stores text).
+const bigText = Buffer.from(Array.from({ length: 70_000 }, (_, i) => `line ${i} é€😀 ${"x".repeat(i % 7)}\n`).join(""));
+assert(bigText.length > MiB + 512 * 1024);
+put("/big.txt", bigText, "text/plain; charset=utf-8");
 put("/empty.txt", "", "text/plain; charset=utf-8");
 // Every byte value, so a text decode anywhere would show.
 put("/small.bin", Buffer.from(Array.from({ length: 4096 }, (_, i) => i % 256)), "application/octet-stream");
@@ -248,6 +268,7 @@ const bakedFiles = new Map<string, Buffer>([
   ["/index.html", Buffer.from("<h1>baked home</h1>")],
   ["/about.html", Buffer.from("<h1>baked about</h1>")],
   ["/pic.bin", Buffer.from(Array.from({ length: 600 }, (_, i) => (i * 7) % 256))],
+  ["/café.txt", Buffer.from("baked accent")],
 ]);
 const bakedManifest = {
   notFound: "single-page-application",
@@ -258,7 +279,11 @@ const bakedManifest = {
       {
         hash: sha(b),
         size: b.length,
-        type: p.endsWith(".html") ? "text/html; charset=utf-8" : "application/octet-stream",
+        type: p.endsWith(".html")
+          ? "text/html; charset=utf-8"
+          : p.endsWith(".txt")
+            ? "text/plain; charset=utf-8"
+            : "application/octet-stream",
       },
     ]),
   ),
@@ -427,6 +452,7 @@ try {
 
   // -- no manifest at all (an empty view: no assets deployed) is a 404 for every path; a malformed one is an error each
   //    time; the worker recovers when the manifest is back
+  assert.equal((await dir("/old")).status, 301, "the redirect is cached by the worker");
   const keep = readFileSync(join(view, "manifest.json"));
   rmSync(join(view, "manifest.json"));
   for (let i = 0; i < 2; i++) {
@@ -434,6 +460,10 @@ try {
     assert.equal(r.status, 404);
     assert.equal(text(r), "Not Found");
   }
+  r = await dir("/old");
+  assert.equal(r.status, 404, "a removed manifest takes its redirects with it");
+  assert.equal(r.headers.get("location"), null);
+  assert.equal((await dir("/docs/")).headers.get("x-docs"), null, "... and its header rules");
   writeManifest("none", "{not json");
   for (let i = 0; i < 2; i++) assert.equal((await dir("/index.html")).status, 500, "a malformed manifest");
   writeManifest("none", "[1,2]");
@@ -441,6 +471,9 @@ try {
   writeFileSync(join(view, "manifest.tmp"), keep);
   renameSync(join(view, "manifest.tmp"), join(view, "manifest.json"));
   assert.equal(text(await dir("/index.html")), "<h1>home</h1>");
+  r = await dir("/old");
+  assert.equal(r.status, 301, "a restored manifest redirects again");
+  assert.equal(r.headers.get("location"), "/about");
   writeManifest("404-page");
 
   // -- conditional requests
@@ -459,6 +492,15 @@ try {
       ["", false],
       [`${tag.slice(0, -1)}x"`, false],
       [tag.slice(1, -1), false],
+      ["  *  ", true],
+      [`"a,b", ${tag}`, true],
+      [`W/"a,b",W/${tag}`, true],
+      // a comma inside a quoted tag is part of the tag: no fragment of it is a tag or the wildcard
+      ['"a,*,b"', false],
+      [`"x,${tag.slice(1, -1)}"`, false],
+      [`"x,${tag.slice(1, -1)}`, false],
+      [`*, ${other}`, false],
+      [`${other}, *`, false],
     ];
     for (const [inm, hit] of cases) {
       const label = `${how} If-None-Match: ${inm}`;
@@ -494,6 +536,60 @@ try {
   assert.equal(text(await old("/docs")), "<h1>docs</h1>");
   assert.equal((await old("/big.bin")).bytes.length, bytesOf("/big.bin").length);
 
+  // -- percent-encoded request paths: matched against the literal manifest names
+  for (const p of ["/caf%C3%A9.txt", "/caf%c3%a9.txt", "/caf\u00e9.txt"]) {
+    r = await dir(p);
+    assert.equal(r.status, 200, p);
+    assert.equal(text(r), "accent", p);
+    assert.equal(r.headers.get("etag"), `"${files["/café.txt"]!.hash}"`);
+  }
+  assert.equal((await dir("/caf%C3%A9.txt", { inm: `"${files["/café.txt"]!.hash}"` })).status, 304);
+  assert.equal(text(await dir("/%61bout")), "<h1>about</h1>", "an escaped ASCII letter");
+  assert.equal(text(await dir("/docs%2F")), "<h1>nothing here</h1>", "%2F is not a path separator (404 page)");
+  assert.equal(
+    text(await dir("/lit%20eral.txt")),
+    "literal percent",
+    "a name with a literal escape still matches as written",
+  );
+  assert.equal(text(await dir("/lit%2520eral.txt")), "literal percent");
+  // never a throw, never a file: malformed escapes, escapes that would make a separator, a dot segment or a control character
+  for (const p of [
+    "/caf%C3.txt",
+    "/caf%.txt",
+    "/%zz",
+    "/%E0%A4%A",
+    "/%C0%AF",
+    "/docs%2Findex.html",
+    "/docs%2findex.html",
+    "/about%2F..%2Fabout.html",
+    "/docs/%2e%2e%2findex.html",
+    "/%5Cindex.html",
+    "/index.html%00",
+    "/%00",
+  ]) {
+    r = await dir(p);
+    assert.equal(r.status, 404, p);
+    assert.equal(text(r), "<h1>nothing here</h1>", `${p}: ${text(r)}`);
+  }
+  assert.equal((await dir("/caf%C3%A9.txt", { via: "init" })).status, 200);
+
+  // -- a streamed asset (over 1 MiB, so env.ASSETS answers with a stream) put in the Cache API is stored whole
+  //    (a Promise body would be stored as {}) and read back byte-exact
+  r = await dir("/big.txt");
+  assert.equal(r.status, 200);
+  assert(r.bytes.equals(bigText), "/big.txt (streamed) is not byte-exact");
+  assert.equal(JSON.parse((await dir("/big.txt", { meta: "1" })).bytes.toString()).length, String(bigText.length));
+  r = await dir("/big.txt", { cache: "put", k: "big" });
+  assert.equal(text(r), "stored 200");
+  r = await dir("/", { cache: "get", k: "big" });
+  assert.equal(r.status, 200);
+  assert.equal(r.headers.get("x-cache"), "hit");
+  assert.equal(r.bytes.length, bigText.length, "the cached copy has the asset's length");
+  assert(r.bytes.equals(bigText), "the cached copy is not byte-exact");
+  // a small (whole-read) asset still goes in synchronously
+  assert.equal(text(await dir("/about.html", { cache: "put", k: "small" })), "stored 200");
+  assert.equal(text(await dir("/", { cache: "get", k: "small" })), "<h1>about</h1>");
+
   // -- the Cloud's own shape: the module carries the settings and no files, the host gives the view; the files come from the view
   r = await settings("/index.html");
   assert.equal(r.status, 200, "settings-only bundle: the view is served");
@@ -512,6 +608,17 @@ try {
   r = await baked("/pic.bin");
   assert(r.bytes.equals(bakedFiles.get("/pic.bin") ?? Buffer.alloc(0)), "baked binary is not byte-exact");
   assert.equal((await baked("/old")).status, 301);
+  const rc = await baked("/caf%C3%A9.txt");
+  assert.equal(rc.status, 200, "baked: a percent-encoded non-ASCII name");
+  assert.equal(text(rc), "baked accent");
+  assert.equal(text(await baked("/caf\u00e9.txt")), "baked accent");
+  assert.equal(
+    text(await baked("/caf%C3.txt")),
+    "<h1>baked home</h1>",
+    "baked: a malformed escape is a miss, not an error",
+  );
+  assert.equal(text(await baked("/about%2F")), "<h1>baked home</h1>");
+  assert.equal(text(await baked("/%61bout")), "<h1>baked about</h1>");
   const bakedTag = `"${bakedManifest.files["/about.html"]!.hash}"`;
   assert.equal(r.headers.get("etag"), `"${bakedManifest.files["/pic.bin"]!.hash}"`);
   for (const how of via) {

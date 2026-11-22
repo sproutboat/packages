@@ -7454,6 +7454,44 @@ globalThis.__sbFetchUpstream = function (op, msg) {
 // redirects, an exact file, a trailing "/" -> index.html, an extensionless path -> ".html" then "/index.html", then the
 // manifest's notFound ("single-page-application": /index.html, "404-page": /404.html). FILES is what a path is looked up
 // in (baked: the file bytes; directory: the manifest's entries). The reply carries the matched `key` and never a body.
+function __sbAssetFindKey(files, path) {
+  if (path.charAt(path.length - 1) === "/") {
+    const index = path + "index.html";
+    return files[index] != null ? index : null;
+  }
+  if (files[path] != null) return path;
+  const base = path.slice(path.lastIndexOf("/") + 1);
+  if (base.indexOf(".") === -1) {
+    if (files[path + ".html"] != null) return path + ".html";
+    if (files[path + "/index.html"] != null) return path + "/index.html";
+  }
+  return null;
+}
+// The request path with its percent-escapes decoded, as Cloudflare's asset lookup does, so "/caf%C3%A9.txt" finds the file
+// "/café.txt". null when the decoded name could mean something else than a file name: a malformed escape, an escape that
+// decodes to "/", "\\" or a control character (so "%2F" can never add a path segment), or a segment that decodes to "." or
+// "..". Such a path is looked up as written only, never as a decoded name.
+function __sbAssetDecodePath(path) {
+  if (path.indexOf("%") === -1) return null;
+  const parts = path.split("/");
+  for (let i = 0; i < parts.length; i++) {
+    const seg = parts[i];
+    if (seg.indexOf("%") === -1) continue;
+    let d = "";
+    try {
+      d = decodeURIComponent(seg);
+    } catch (e) {
+      return null;
+    }
+    if (d === "." || d === "..") return null;
+    for (let j = 0; j < d.length; j++) {
+      const c = d.charCodeAt(j);
+      if (c < 32 || c === 47 || c === 92 || c === 127) return null;
+    }
+    parts[i] = d;
+  }
+  return parts.join("/");
+}
 function __sbAssetPick(manifest, files, rawPath) {
   let path = String(rawPath || "/");
   if (path.charAt(0) !== "/") path = "/" + path;
@@ -7462,19 +7500,10 @@ function __sbAssetPick(manifest, files, rawPath) {
   const redirect = __sbFindAssetRedirect(man.redirects || [], path);
   if (redirect !== null) return { ok: true, found: false, status: redirect.status, location: redirect.location };
 
-  let key = null;
-  if (path.charAt(path.length - 1) === "/") {
-    const index = path + "index.html";
-    if (files[index] != null) key = index;
-  } else if (files[path] != null) {
-    key = path;
-  } else {
-    const base = path.slice(path.lastIndexOf("/") + 1);
-    if (base.indexOf(".") === -1) {
-      if (files[path + ".html"] != null) key = path + ".html";
-      else if (files[path + "/index.html"] != null) key = path + "/index.html";
-    }
-  }
+  // The decoded name first; then the path as written (a file whose name has a literal "%20" in it keeps working).
+  const decoded = __sbAssetDecodePath(path);
+  let key = decoded !== null ? __sbAssetFindKey(files, decoded) : null;
+  if (key === null) key = __sbAssetFindKey(files, path);
   if (key != null) {
     const info = meta[key] || {};
     return { ok: true, found: true, status: 200, type: info.type, hash: info.hash, key };
@@ -7559,7 +7588,11 @@ function __sbAssetDirManifest(dir) {
     const s = __sbAssetsOp(0, dir, "", 0, null);
     if (s === -2) throw new Error("sproutboat assets: manifest.json is over 4 MiB");
     // No manifest.json: the app's view is empty (no assets deployed), so every path is a 404, as with an empty assets directory.
-    if (s < 0) return { files: {} };
+    // The manifest of an earlier read must not outlive the file (its redirects and headers would still apply).
+    if (s < 0) {
+      __sbAssetDirMan = null;
+      return { files: {} };
+    }
     if (s % 2 === 0 && __sbAssetDirMan !== null) return __sbAssetDirMan;
     const view = new Uint8Array((s - (s % 2)) / 2);
     const n = __sbAssetsOp(1, dir, "", 0, view);

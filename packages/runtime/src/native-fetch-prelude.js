@@ -3457,14 +3457,18 @@ if (globalThis.caches == null) {
       response.headers.forEach((value, name) => {
         headers[name] = value;
       });
-      __sbRpc("cache.put", {
-        name: this._name,
-        key: __sbCacheKey(request),
-        status: response.status,
-        headers,
-        body: response.text(),
-      });
-      return undefined;
+      const name = this._name;
+      const key = __sbCacheKey(request);
+      const status = response.status;
+      const store = (body) => {
+        __sbRpc("cache.put", { name, key, status, headers, body });
+        return undefined;
+      };
+      // A streamed body (a large blob-backed asset from env.ASSETS) reads as a Promise of the text: store it once it has
+      // arrived (a Promise in the RPC would be JSON-serialized as {}). Every other body is a string, stored at once.
+      const text = response.text();
+      if (text instanceof Promise) return text.then(store);
+      return store(text);
     }
     delete(request) {
       return !!__sbRpc("cache.delete", { name: this._name, key: __sbCacheKey(request) }).deleted;
@@ -11461,14 +11465,22 @@ function __sbAssetInm(input, init) {
   const h = init && init.headers != null ? init.headers : input && !__sbIsStr(input) ? input.headers : null;
   return h == null ? null : new Headers(h).get("if-none-match");
 }
-// A comma list of entity tags, each optionally weak (W/), or *, against the file's tag "<hash>".
+// `*` (the whole field value), or a comma list of entity tags, each optionally weak (W/), against the file's tag "<hash>".
+// A comma inside a quoted tag belongs to the tag (RFC 9110 allows it), so the list is split outside the quotes only.
 function __sbAssetNoneMatch(inm, hash) {
-  const list = inm.split(",");
-  for (let i = 0; i < list.length; i++) {
-    let tag = list[i].trim();
-    if (tag === "*") return true;
-    if (tag.startsWith("W/")) tag = tag.slice(2);
-    if (tag === '"' + hash + '"') return true;
+  if (inm.trim() === "*") return true;
+  const want = '"' + hash + '"';
+  let quoted = false;
+  let start = 0;
+  for (let i = 0; i <= inm.length; i++) {
+    const c = i < inm.length ? inm.charAt(i) : ",";
+    if (c === '"') quoted = !quoted;
+    else if (c === "," && !quoted) {
+      let tag = inm.slice(start, i).trim();
+      start = i + 1;
+      if (tag.startsWith("W/")) tag = tag.slice(2);
+      if (tag === want) return true;
+    }
   }
   return false;
 }
