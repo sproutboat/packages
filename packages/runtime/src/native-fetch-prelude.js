@@ -12867,6 +12867,15 @@ function __sbDOFind(Ctor, name) {
   return undefined;
 }
 
+// A method the class does not define but the instance answers, for a constructor that returns a Proxy (Alchemy's Durable Object
+// bridge answers every unknown name through its get trap, as workerd's property lookup would). Own data properties and the names every
+// object has stay out of reach, as for a class method.
+function __sbDOProxied(inst, name) {
+  if (name === "constructor" || name in Object.prototype || Object.getOwnPropertyDescriptor(inst, name)) return undefined;
+  const value = inst[name];
+  return __sbIsFn(value) ? { value } : undefined;
+}
+
 function __sbDOStub(className, id) {
   const base = {
     id,
@@ -12917,8 +12926,9 @@ function __sbDOInvoke(cls, id, method, args) {
     return Promise.reject(error);
   }
   const run = () => {
-    const d = __sbDOFind(__sbDOClasses[cls], method);
-    if (args === null) return d.get.call(inst);
+    const found = __sbDOFind(__sbDOClasses[cls], method);
+    if (args === null) return found.get.call(inst);
+    const d = found ?? __sbDOProxied(inst, method);
     if (!d || !__sbIsFn(d.value)) throw new TypeError('The RPC receiver does not implement the method "' + method + '".');
     return d.value.apply(inst, copied);
   };
@@ -12947,8 +12957,9 @@ function __sbDOInvokeLive(cls, id, method, args) {
     id.toString(),
     id,
     (inst) => {
-      const d = __sbDOFind(__sbDOClasses[cls], method);
-      if (args === null) return d.get.call(inst);
+      const found = __sbDOFind(__sbDOClasses[cls], method);
+      if (args === null) return found.get.call(inst);
+      const d = found ?? __sbDOProxied(inst, method);
       if (!d || !__sbIsFn(d.value)) throw new TypeError('The RPC receiver does not implement the method "' + method + '".');
       return d.value.apply(inst, copied);
     },
@@ -15517,6 +15528,10 @@ class __SbWebSocketPair {
     server._peer = client;
     this[0] = client;
     this[1] = server;
+  }
+  // Iterable as in workerd: `const [client, server] = new WebSocketPair()` (Alchemy's acceptWebSocketPair) as well as Object.values(pair).
+  [Symbol.iterator]() {
+    return [this[0], this[1]][Symbol.iterator]();
   }
 }
 

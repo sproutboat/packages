@@ -62,6 +62,7 @@
     "test:native-storage-s3-app": "bun packages/runtime/test/native-storage-s3-app.ts",
     "test:native-db-table": "bun packages/runtime/test/native-db-table.ts",
     "test:native-do-evict": "bun packages/runtime/test/native-do-evict.ts",
+    "test:native-do-proxy-rpc": "bun packages/runtime/test/native-do-proxy-rpc.ts",
     "test:native-d1": "bun packages/runtime/test/native-d1.ts",
     "test:native-sqlite-lock": "bun packages/runtime/test/native-sqlite-lock.ts",
     "test:native-byte-text": "bun packages/runtime/test/native-byte-text.ts",
