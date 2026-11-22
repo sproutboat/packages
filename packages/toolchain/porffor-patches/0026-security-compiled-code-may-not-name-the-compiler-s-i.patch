@@ -21,10 +21,10 @@ Class: ours
 Pass: refuseIntrinsics (refuse.js; modules.js, codegen.js, semantic.js)
 ---
  compiler/codegen.js  |  3 ++-
- compiler/modules.js  |  8 ++++++++
+ compiler/modules.js  | 15 ++++++++++++++
  compiler/refuse.js   | 49 ++++++++++++++++++++++++++++++++++++++++++++
  compiler/semantic.js |  3 ++-
- 4 files changed, 61 insertions(+), 2 deletions(-)
+ 4 files changed, 68 insertions(+), 2 deletions(-)
  create mode 100644 compiler/refuse.js
 
 diff --git a/compiler/codegen.js b/compiler/codegen.js
@@ -49,7 +49,7 @@ index ced70517a07814fb29334e4e5250a5c3a7725d51..b331d8e061a184cfaf1752ee034266c3
          if (e.name === 'SyntaxError') return internalThrow(scope, 'SyntaxError', e.message);
          throw e;
 diff --git a/compiler/modules.js b/compiler/modules.js
-index 7ec2fb8d50d34d33f3607a1f78915531863073c0..d91b74e93380ae30ec14235d6f847da33ee7e04e 100644
+index 7ec2fb8d50d34d33f3607a1f78915531863073c0..b8c323e08e0c9f985f8fda11b562f61c2dbf3d7f 100644
 --- a/compiler/modules.js
 +++ b/compiler/modules.js
 @@ -1,6 +1,7 @@
@@ -60,18 +60,25 @@ index 7ec2fb8d50d34d33f3607a1f78915531863073c0..d91b74e93380ae30ec14235d6f847da3
  
  const fs = (typeof process?.version !== 'undefined' ? (await import('node:fs')) : undefined);
  
-@@ -249,6 +250,10 @@ const dataSource = url => {
+@@ -249,6 +250,17 @@ const dataSource = url => {
  // so their globals, inits and namespace bindings can be emitted after the shared ones
  export const appModuleIds = new Set();
  export const isAppModule = (file, rel, entry) => !entry && !file.startsWith(RUNTIME_ROOT) && !file.startsWith('data:') && !/(^|\/)(shared-prelude|anchor-ns)\.js$/.test(rel);
 +// sproutboat: a module the platform wrote is the entry (the generation's own app.js, or a standalone build's bundle:
 +// its author's own code), the runtime, and the shared prelude and anchor beside the entry. Anything else (an app's
 +// worker.js, a `data:` module, an import of either) may not name the compiler's intrinsics (refuse.js).
-+export const isUntrusted = (file, entryDir, entry) => !entry && !file.startsWith(RUNTIME_ROOT + '/') && file !== entryDir + '/shared-prelude.js' && file !== entryDir + '/anchor-ns.js';
++// The two names are compared as real paths: a temp dir under a symlink (/var on macOS) reaches the loader as both spellings.
++const realPath = p => { try { return fs.realpathSync(p); } catch { return p; } };
++export const isUntrusted = (file, entryDir, entry) => {
++  if (entry || file.startsWith(RUNTIME_ROOT + '/')) return false;
++  if (file.startsWith('data:') || !/(^|\/)(shared-prelude|anchor-ns)\.js$/.test(file)) return true;
++  const real = realPath(file), dir = realPath(entryDir);
++  return real !== dir + '/shared-prelude.js' && real !== dir + '/anchor-ns.js';
++};
  export const isEsmSource = (file, src) => {
    if (/\.m[jt]s$/.test(file) || file.startsWith('data:')) return true;
    if (/\.c[jt]s$/.test(file)) return false;
-@@ -754,6 +759,7 @@ const vmWrapper = (code, params, id) => {
+@@ -754,6 +766,7 @@ const vmWrapper = (code, params, id) => {
    let body;
    try {
      body = params ? [ { type: 'ReturnStatement', argument: parse(`(function (${params.join(',')}) {\n${code}\n})`, { module: false }).body[0].expression } ] : parse(code, { module: false }).body;
@@ -79,7 +86,7 @@ index 7ec2fb8d50d34d33f3607a1f78915531863073c0..d91b74e93380ae30ec14235d6f847da3
    } catch (e) {
      if (e.name !== 'SyntaxError') throw e;
      return { type: 'NewExpression', callee: ident('SyntaxError'), arguments: [ literal(e.message) ] };
-@@ -787,6 +793,7 @@ const vmModule = (code, id) => {
+@@ -787,6 +800,7 @@ const vmModule = (code, id) => {
    let body;
    try {
      body = parse(code, { module: true }).body;
@@ -87,7 +94,7 @@ index 7ec2fb8d50d34d33f3607a1f78915531863073c0..d91b74e93380ae30ec14235d6f847da3
    } catch (e) {
      if (e.name !== 'SyntaxError') throw e;
      return { type: 'NewExpression', callee: ident('SyntaxError'), arguments: [ literal(e.message) ] };
-@@ -947,6 +954,7 @@ export default (entrySource, entryFile, opts = {}) => {
+@@ -947,6 +961,7 @@ export default (entrySource, entryFile, opts = {}) => {
      mod.esm = entry ? !opts.script && !opts.cjs && !/\.c[jt]s$/.test(file) : isEsmSource(file, source);
      // cjs code is a function body to node
      const ast = parse(source, { module: mod.esm, ts, topReturn: !mod.esm && !(entry && opts.script) });

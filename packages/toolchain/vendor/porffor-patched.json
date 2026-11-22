@@ -37,16 +37,16 @@
       "0026-security-compiled-code-may-not-name-the-compiler-s-i.patch",
       "0027-builtins-regenerate-compiler-builtins_precompiled.js.patch"
     ],
-    "sha256": "1bd65ca8e5b4bd45268b01948a6fcca527977c546d035cb846c7ca0d13c4d0ae"
+    "sha256": "45a3d965fa5ca50d40f462ef2fc8703b12330da78b10dc550947aa1ccd5a2540"
   },
   "tar": {
-    "sha256": "acdc4a5607db7f820dd3b4e4b573f11daf1f897494c612f56935e61d1b033bff",
-    "bytes": 6350336
+    "sha256": "7439bf705bfe8fd0839b11929bc867320f81f2230a16a77d0fcae48cb53a71c1",
+    "bytes": 6350848
   },
   "tarball": {
     "file": "porffor-patched.tar.gz",
-    "sha256": "7de2c4687560a5676de05bbc99da10632ad293a15518b969376f38a6b5144568",
-    "bytes": 1596078,
+    "sha256": "a4a43130c0ca393ffee7607d8adcffb59a1c7eb3efca8e7bfea72f4cba6efdce",
+    "bytes": 1596197,
     "compressor": "bun 1.4.4 gzipSync level 9"
   }
 }

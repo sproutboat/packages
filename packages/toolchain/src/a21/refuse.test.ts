@@ -1,5 +1,5 @@
 import { afterAll, expect, test } from "bun:test";
-import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { extractPatchedTree } from "./patched-tree";
 import { INTRINSIC_REFUSAL } from "./pin";
@@ -194,4 +194,49 @@ test("every intrinsic the tree defines is a name the refusal recognises (a new a
   expect(out.missed).toEqual([]);
   expect(out.porffor).toBe(true);
   expect(out.level).toBe(INTRINSIC_REFUSAL);
+});
+
+test("the shared prelude beside the entry stays trusted when the directory is reached through a symlink (macOS /var), and a look-alike elsewhere does not", async () => {
+  const root = await tree();
+  const real = join(root, `w${n++}`);
+  await mkdir(real);
+  await writeFile(join(real, "shared-prelude.js"), PRELUDE);
+  await writeFile(join(real, "worker.js"), `import "./shared-prelude.js";\nexport const ok = 1;\n`);
+  await writeFile(
+    join(real, "app.js"),
+    'import "./worker.js";\nexport default { fetch() { return new Response("x"); } };\n',
+  );
+  const link = join(root, `l${n++}`);
+  await symlink(real, link);
+  const run = Bun.spawnSync(
+    [
+      "bun",
+      join(root, "runtime/index.js"),
+      "c",
+      join(link, "app.js"),
+      "-o",
+      join(real, "out"),
+      "--sb-entry-file=/sproutd/app.js",
+    ],
+    { cwd: root, stdout: "pipe", stderr: "pipe" },
+  );
+  expect(run.exitCode, new TextDecoder().decode(run.stderr)).toBe(0);
+  // A shared-prelude.js in another directory (a subdirectory, imported by the app) is the app's, not the platform's.
+  await mkdir(join(real, "sub"));
+  await writeFile(join(real, "sub/shared-prelude.js"), PRELUDE);
+  await writeFile(join(real, "worker.js"), `import "./shared-prelude.js";\nimport "./sub/shared-prelude.js";\n`);
+  const bad = Bun.spawnSync(
+    [
+      "bun",
+      join(root, "runtime/index.js"),
+      "c",
+      join(link, "app.js"),
+      "-o",
+      join(real, "out2"),
+      "--sb-entry-file=/sproutd/app.js",
+    ],
+    { cwd: root, stdout: "pipe", stderr: "pipe" },
+  );
+  expect(bad.exitCode).not.toBe(0);
+  expect(new TextDecoder().decode(bad.stderr)).toContain("SB_INPUT_REFUSED");
 });
