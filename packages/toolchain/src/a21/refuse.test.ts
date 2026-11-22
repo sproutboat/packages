@@ -137,6 +137,8 @@ test("an ordinary app compiles: strings, comments, flags named like dunders and 
     [
       "const a = [1, 2, 3].join('-'); const m = Math.max(1, 2); const b = new Uint8Array(4);",
       "globalThis.__DEV__ = 1; const __esModule = true; const o = { __proto__: null };",
+      // Rolldown's CommonJS interop helpers (every Alchemy bundle has them): a dunder with an underscore tail that is not a builtin's.
+      "const __toESMCache_node = new WeakMap(), __toESMCache_esm = new WeakMap(); __toESMCache_node.set({}, 1); __toESMCache_esm.set({}, 2);",
       "const d = 'Porffor.c and __Porffor_malloc in a string'; // Porffor.c in a comment",
       "/* __Porffor_malloc, __Array_prototype_join */",
       "const f = new Function('a', 'b', 'return a + b'); const s = eval('1 + 2');",

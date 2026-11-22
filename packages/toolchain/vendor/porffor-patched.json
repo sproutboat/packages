@@ -38,16 +38,16 @@
       "0027-codegen-block-function-declarations-reach-a-fixpoint.patch",
       "0028-builtins-regenerate-compiler-builtins_precompiled.js.patch"
     ],
-    "sha256": "4511587c049d5fffa76fb12158cc7f615b45506ba1231ca4eda5c6059297baab"
+    "sha256": "4756d518f73d32847df3c97bfb14a35383559f5f6f11538572873e2932ef14c3"
   },
   "tar": {
-    "sha256": "724c323c6ab0fef1b70e742e8837a9bfb8b430e8c74627deb48433c537c720cd",
-    "bytes": 6351872
+    "sha256": "36a708925490a1606a9427781f6967ce8f077b87177e5c1f69fc48e900be4c73",
+    "bytes": 6352384
   },
   "tarball": {
     "file": "porffor-patched.tar.gz",
-    "sha256": "1b53c0cd1780c4abb3590f526e98657880c82228f4857cafd81d6b3efd9ff586",
-    "bytes": 1596433,
+    "sha256": "d7209294abfca5477a2b67055ac5ab151416e282b8dc6f70e00b89dcd1e87582",
+    "bytes": 1596689,
     "compressor": "bun 1.4.4 gzipSync level 9"
   }
 }

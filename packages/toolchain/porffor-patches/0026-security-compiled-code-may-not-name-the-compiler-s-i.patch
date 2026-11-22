@@ -21,10 +21,10 @@ Class: ours
 Pass: refuseIntrinsics (refuse.js; modules.js, codegen.js, semantic.js)
 ---
  compiler/codegen.js  |  3 ++-
- compiler/modules.js  | 15 ++++++++++++++
- compiler/refuse.js   | 49 ++++++++++++++++++++++++++++++++++++++++++++
+ compiler/modules.js  | 15 ++++++++++++
+ compiler/refuse.js   | 54 ++++++++++++++++++++++++++++++++++++++++++++
  compiler/semantic.js |  3 ++-
- 4 files changed, 68 insertions(+), 2 deletions(-)
+ 4 files changed, 73 insertions(+), 2 deletions(-)
  create mode 100644 compiler/refuse.js
 
 diff --git a/compiler/codegen.js b/compiler/codegen.js
@@ -104,10 +104,10 @@ index 7ec2fb8d50d34d33f3607a1f78915531863073c0..b8c323e08e0c9f985f8fda11b562f61c
      literalImports(mod.body);
 diff --git a/compiler/refuse.js b/compiler/refuse.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..00406ee74c0695f78d56932c291bea63345982d8
+index 0000000000000000000000000000000000000000..91e919b7e38d15ed74a2bd8aff62bc1cf71d5aa1
 --- /dev/null
 +++ b/compiler/refuse.js
-@@ -0,0 +1,49 @@
+@@ -0,0 +1,54 @@
 +import './prefs.js';
 +
 +// sproutboat: code compiled on someone else's behalf never names the compiler's own intrinsics.
@@ -127,7 +127,12 @@ index 0000000000000000000000000000000000000000..00406ee74c0695f78d56932c291bea63
 +// __ecma262_ToString, __Uint8Array___proto__, __RegExp_$1$get ... A name that is only a flag, `__DEV__`, `__proto__`,
 +// `__esModule`, `__dirname`, has no letter after its second underscore and passes.
 +const INTRINSIC = /^__[A-Za-z][A-Za-z0-9]*_(?!_*$)/;
-+export const isIntrinsicName = name => name === 'Porffor' || INTRINSIC.test(name);
++// Names a bundler writes into its output that look like an intrinsic and are not one: no builtin has a namespace of this name
++// (Rolldown's `__toESMCache_node` and `__toESMCache_esm`, which every Rolldown bundle that interops with CommonJS carries: Alchemy's).
++// The first segment is compared whole, so `__toESMCache_x` passes and `__Array_x` does not. A builtin cannot be named like this
++// by accident: the exhaustive test in packages/toolchain refuses every builtin dunder name of the shipped tree.
++const BUNDLER_HELPERS = new Set([ 'toESMCache' ]);
++export const isIntrinsicName = name => name === 'Porffor' || (INTRINSIC.test(name) && !BUNDLER_HELPERS.has(name.slice(2, name.indexOf('_', 2))));
 +
 +const SKIP = new Set([ 'start', 'end', 'loc', 'range' ]);
 +
