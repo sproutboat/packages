@@ -6600,11 +6600,8 @@ function __sbEmbeddedDispatch(msg) {
     // disk. Otherwise, where the host gave this worker a view of the asset store (SB_ASSETS_DIR), from there.
     // One resolver (__sbAssetPick) for both; same reply shape as the broker.
     const bundle = globalThis.__sbAssets;
-    if (!bundle) {
-      const dir = __sbEnv("SB_ASSETS_DIR");
-      if (!dir) throw new Error("assets not bound");
-      return __sbAssetDirPick(dir, msg.path);
-    }
+    if (__sbAssetsFromDir()) return __sbAssetDirPick(__sbEnv("SB_ASSETS_DIR"), msg.path);
+    if (!bundle) throw new Error("assets not bound");
     const files = bundle.files || {};
     const reply = __sbAssetPick(bundle.manifest, files, msg.path);
     if (reply.key != null) reply.body = files[reply.key];
@@ -7494,6 +7491,22 @@ function __sbAssetPick(manifest, files, rawPath) {
   return { ok: true, found: false, status: 404 };
 }
 
+// Which assets this worker serves, decided once: the files baked into the module when there are any; otherwise, where the host gave the worker a
+// view of the asset store (SB_ASSETS_DIR), that. A Cloud deploy whose files did not fit in the module still bakes the SETTINGS (notFound,
+// runSproutFirst, no files), so "something is baked" is not enough: a bundle with no files at all is the same as none.
+let __sbAssetMode = 0;
+function __sbAssetsFromDir() {
+  if (__sbAssetMode === 0) {
+    const b = globalThis.__sbAssets;
+    let baked = false;
+    if (b) {
+      const f = b.files;
+      if (f && Object.keys(f).length > 0) baked = true;
+    }
+    __sbAssetMode = baked || !__sbEnv("SB_ASSETS_DIR") ? 1 : 2;
+  }
+  return __sbAssetMode === 2;
+}
 // Directory assets (SB_ASSETS_DIR): exactly 64 lowercase hex, as sb_assets_hex checks in C.
 function __sbAssetHashOk(hash) {
   if (!__sbIsStr(hash) || hash.length !== 64) return false;
@@ -7608,7 +7621,7 @@ globalThis.__sbAssetsBody = function (hash) {
 
 globalThis.__sbAssetsGet = function (path) {
   const reply = __sbEmbeddedDispatch({ op: "assets.get", path });
-  const manifest = (globalThis.__sbAssets ? globalThis.__sbAssets.manifest : __sbAssetDirMan) || {};
+  const manifest = (__sbAssetsFromDir() ? __sbAssetDirMan : globalThis.__sbAssets ? globalThis.__sbAssets.manifest : null) || {};
   reply.rules = { headers: manifest.headers || [], redirects: manifest.redirects || [] };
   return reply;
 };

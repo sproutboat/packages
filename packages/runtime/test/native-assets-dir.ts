@@ -281,7 +281,8 @@ const anchors = Bun.spawnSync([
 ]);
 assert.equal(anchors.exitCode, 0, anchors.stderr.toString());
 
-async function start(label: string, date: string, baked: boolean, env: Record<string, string>) {
+// baked: the files in the module, "settings" the bundle a Cloud deploy of assets that did not fit carries (notFound and runSproutFirst, no files).
+async function start(label: string, date: string, baked: boolean | "settings", env: Record<string, string>) {
   const core = readFileSync(preludePath, "utf8");
   const transport = readFileSync(transportPath("embedded"), "utf8");
   assert(core.includes(TRANSPORT_MARKER), "runtime prelude is missing its transport marker");
@@ -297,12 +298,14 @@ async function start(label: string, date: string, baked: boolean, env: Record<st
       undefined,
       date,
       label,
-      baked
-        ? {
-            manifest: bakedManifest,
-            files: Object.fromEntries([...bakedFiles].map(([p, b]) => [p, b.toString("latin1")])),
-          }
-        : undefined,
+      baked === "settings"
+        ? { manifest: { notFound: "404-page", runSproutFirst: true, files: {} }, files: {} }
+        : baked
+          ? {
+              manifest: bakedManifest,
+              files: Object.fromEntries([...bakedFiles].map(([p, b]) => [p, b.toString("latin1")])),
+            }
+          : undefined,
       "embedded",
     ),
   );
@@ -346,11 +349,12 @@ async function start(label: string, date: string, baked: boolean, env: Record<st
 
 try {
   const dirs = { SB_ASSETS_DIR: view };
-  const [dir, old, baked, bakedOld] = await Promise.all([
+  const [dir, old, baked, bakedOld, settings] = await Promise.all([
     start("dir", "2026-11-22", false, dirs),
     start("old", "2026-11-21", false, dirs),
     start("baked", "2026-11-22", true, {}),
     start("bakedold", "2026-11-21", true, {}),
+    start("settings", "2026-11-22", "settings", dirs),
   ]);
   const text = (r: { bytes: Buffer }) => r.bytes.toString("utf8");
 
@@ -489,6 +493,15 @@ try {
   }
   assert.equal(text(await old("/docs")), "<h1>docs</h1>");
   assert.equal((await old("/big.bin")).bytes.length, bytesOf("/big.bin").length);
+
+  // -- the Cloud's own shape: the module carries the settings and no files, the host gives the view; the files come from the view
+  r = await settings("/index.html");
+  assert.equal(r.status, 200, "settings-only bundle: the view is served");
+  assert.equal(text(r), "<h1>home</h1>");
+  assert.equal((await settings("/nope/never")).status, 404);
+  assert.equal((await settings("/about")).status, 200);
+  r = await settings("/big.bin");
+  assert.equal(r.status, 200);
 
   // -- baked assets: the same reply as ever, now with 304 from the date on
   r = await baked("/about");
