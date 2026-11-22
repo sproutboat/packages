@@ -1,0 +1,62 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sproutboat <noreply@sproutboat.com>
+Date: Sun, 22 Nov 2026 16:00:46 +0100
+Subject: [PATCH] codegen: block function declarations reach a fixpoint before
+ their first use (P15)
+
+A strict block moves each function declaration to just before the first earlier statement that mentions
+it, in one pass over the block. A function moved up this way can itself mention a function declared later
+that the pass had already left alone, so the callee ends up behind its caller. When the caller is
+generated at its declaration (it assigns itself, the bundler's `function init_X() { return (init_X = ...)() }`
+form) its nested closures are compiled before the callee is declared: the call cannot resolve the callee,
+reads an env slot nobody fills, and the callee is never marked referenced, so it is dropped from the
+output. At run time the call throws a TypeError with no message ("proxy is not a function" with
+`--d`), or aborts with "bad function index".
+
+Alchemy v2's Worker bundle has this shape (`init_Resource` calls `init_Output`, whose class
+constructors call `proxy`, declared in between): every request of a compiled Alchemy Worker answered 500.
+
+The pass now repeats, each function moving at most once, so mutual references stop instead of
+swapping forever.
+
+Class: upstream
+Pass: generateBlock function order (P15)
+Upstream: not filed
+---
+ compiler/codegen.js | 23 ++++++++++++++++-------
+ 1 file changed, 16 insertions(+), 7 deletions(-)
+
+diff --git a/compiler/codegen.js b/compiler/codegen.js
+index b331d8e061a184cfaf1752ee034266c37cabe6ff..051b364d93f2ae246db3922e78f736e25aaf0d6c 100644
+--- a/compiler/codegen.js
++++ b/compiler/codegen.js
+@@ -6490,13 +6490,22 @@ const generateBlock = (scope, decl) => {
+   // strict block functions exist on entry: move one used earlier to just before that use (not the top, closures snapshot loop bindings)
+   if (scope.strict && decl.body.some(x => x.type === 'FunctionDeclaration')) {
+     const names = decl.body.map(x => identifierNames(x, new Set()));
+-    for (let j = 0; j < decl.body.length; j++) {
+-      const fn = decl.body[j];
+-      if (fn.type !== 'FunctionDeclaration') continue;
+-      const i = names.findIndex((x, k) => k < j && x.has(fn.id.name));
+-      if (i === -1) continue;
+-      decl.body.splice(i, 0, decl.body.splice(j, 1)[0]);
+-      names.splice(i, 0, names.splice(j, 1)[0]);
++    // sproutboat: a function moved up can mention a later function that an earlier pass already left alone (a callee behind its
++    // caller is not declared yet when the caller's nested closures are generated: the call becomes an unfilled env slot). Repeat,
++    // each function moving at most once, so mutual references end instead of swapping forever.
++    const movedFns = new Set();
++    for (let again = true, pass = 0; again && pass < decl.body.length; pass++) {
++      again = false;
++      for (let j = 0; j < decl.body.length; j++) {
++        const fn = decl.body[j];
++        if (fn.type !== 'FunctionDeclaration' || movedFns.has(fn)) continue;
++        const i = names.findIndex((x, k) => k < j && x.has(fn.id.name));
++        if (i === -1) continue;
++        decl.body.splice(i, 0, decl.body.splice(j, 1)[0]);
++        names.splice(i, 0, names.splice(j, 1)[0]);
++        movedFns.add(fn);
++        again = true;
++      }
+     }
+   }
+   for (const x of decl.body) {

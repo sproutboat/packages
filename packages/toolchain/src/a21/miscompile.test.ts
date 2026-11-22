@@ -116,5 +116,32 @@ for (const channel of ["alpha-25"] as const) {
       );
       expect(lines).toEqual(["number string string number numbernumber function5L"]);
     }, 60_000);
+
+    test("a function declared after a caller that was moved up is still declared first (Alchemy bundle shape)", async () => {
+      // A strict block moves a function up to just before its first use, in one pass. B moves above A, but B calls P, which
+      // stayed behind it, and B generates its nested closures when it is declared: P was never found, never compiled, and the
+      // call threw a TypeError with no message. Alchemy v2 bundles are init_Resource() / init_Output() / proxy() in this order.
+      const lines = await run(
+        "fnorder",
+        `export {};
+  {
+    function A() { return (A = () => { B(); })(); }
+    function P(e) { return new Proxy(Object.assign(() => {}, e), {}); }
+    function B() { return (B = () => (() => P({}))())(); }
+    A();
+    console.log(B() === undefined ? "undefined" : "ok");
+  }
+  {
+    var Base, Res;
+    function init() { return (init = () => { Base = class { kind = "b"; }; Res = class extends Base { constructor() { return super(), proxy(this); } }; })(); }
+    function proxy(e) { const n = new Proxy(Object.assign(() => {}, e), { get: (t, k) => k === "self" ? n : e[k] }); return n; }
+    function outer() { return init(); }
+    outer();
+    console.log(new Res().kind);
+  }
+  `,
+      );
+      expect(lines).toEqual(["ok", "b"]);
+    }, 60_000);
   });
 }
