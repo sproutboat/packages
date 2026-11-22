@@ -34,18 +34,19 @@
       "0023-codegen-a-written-class-declaration-initialises-its-.patch",
       "0024-codegen-the-right-operand-of-and-is-generated-as-a-b.patch",
       "0025-date-Date.parse-takes-HH-and-HHmm-offsets-as-well-as.patch",
-      "0026-builtins-regenerate-compiler-builtins_precompiled.js.patch"
+      "0026-security-compiled-code-may-not-name-the-compiler-s-i.patch",
+      "0027-builtins-regenerate-compiler-builtins_precompiled.js.patch"
     ],
-    "sha256": "7fa00686c95b7e2134d67d083f6c8181a93554a79cd24e049d3351de20712ef9"
+    "sha256": "45a3d965fa5ca50d40f462ef2fc8703b12330da78b10dc550947aa1ccd5a2540"
   },
   "tar": {
-    "sha256": "1932c5d41c9b8cee0d9967d7d45f66c944804ac18346016eaf17cbd4a32b4678",
-    "bytes": 6346240
+    "sha256": "7439bf705bfe8fd0839b11929bc867320f81f2230a16a77d0fcae48cb53a71c1",
+    "bytes": 6350848
   },
   "tarball": {
     "file": "porffor-patched.tar.gz",
-    "sha256": "5dfee096720f3478b3556d723bf838fd8fd6baa48f964caf15cb76e7ef8b94bc",
-    "bytes": 1594586,
+    "sha256": "a4a43130c0ca393ffee7607d8adcffb59a1c7eb3efca8e7bfea72f4cba6efdce",
+    "bytes": 1596197,
     "compressor": "bun 1.4.4 gzipSync level 9"
   }
 }

@@ -1,0 +1,178 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sproutboat <noreply@sproutboat.com>
+Date: Sun, 22 Nov 2026 15:42:17 +0100
+Subject: [PATCH] security: compiled code may not name the compiler's
+ intrinsics (refuse.js)
+
+`Porffor.c` puts its template text verbatim into the C output; Porffor.IR, Porffor.malloc, Porffor.link and the global
+__Porffor_* and __<Builtin>_* functions (called by builtins with unchecked arguments) are as raw. All of them are
+resolved statically, from identifiers, so the compiler now refuses the identifiers: `Porffor`, and any name of the
+form __Name_x (an intrinsic's name: __Porffor_malloc, __Array_prototype_join, __ecma262_ToString).
+
+The check is on the AST right after parsing, so strings and comments never trigger it and unicode escapes are already
+decoded. It runs on every module that is not the entry, the runtime, or the shared-prelude.js and anchor-ns.js beside
+the entry (isUntrusted in modules.js; a data: module is untrusted), and on the code of every compile-time eval,
+Function and vm source (their strings are parsed and compiled in). The error carries SB_INPUT_REFUSED.
+
+The entry is trusted, so a standalone build (the author's own bundle is the entry) is unchanged. A compile that builds
+the platform's own template (a worker.js holding the prelude) or develops the runtime passes --sb-allow-intrinsics.
+
+Class: ours
+Pass: refuseIntrinsics (refuse.js; modules.js, codegen.js, semantic.js)
+---
+ compiler/codegen.js  |  3 ++-
+ compiler/modules.js  | 15 ++++++++++++++
+ compiler/refuse.js   | 49 ++++++++++++++++++++++++++++++++++++++++++++
+ compiler/semantic.js |  3 ++-
+ 4 files changed, 68 insertions(+), 2 deletions(-)
+ create mode 100644 compiler/refuse.js
+
+diff --git a/compiler/codegen.js b/compiler/codegen.js
+index ced70517a07814fb29334e4e5250a5c3a7725d51..b331d8e061a184cfaf1752ee034266c37cabe6ff 100644
+--- a/compiler/codegen.js
++++ b/compiler/codegen.js
+@@ -12,6 +12,7 @@ import { BuiltinFuncs, BuiltinVars, fullPrototypes } from './builtins.js';
+ import { TYPES, TYPE_FLAGS, TYPE_NAMES, TYPED_ARRAY_TYPES, ITERATOR_TYPES } from './types.js';
+ import semantic, { knownValue, unknownValue, storageInt } from './semantic.js';
+ import parse from './parse.js';
++import { refuseIntrinsics } from './refuse.js';
+ import { patternNames, appModuleIds } from './modules.js';
+ import temporalPolyfillSource from './intl/temporal.js';
+ import intlPolyfillSource from './intl/intl.js';
+@@ -2242,7 +2243,7 @@ const generateCall = (scope, decl) => {
+       const fnArgs = knowns.slice(0, -1).map(x => String(x));
+       let parsed;
+       try {
+-        parsed = semantic(objectHack(parse(`(function(${fnArgs.join(',')}){${code}})`)), decl._semanticScopes);
++        parsed = semantic(objectHack(refuseIntrinsics(parse(`(function(${fnArgs.join(',')}){${code}})`), 'code given to Function')), decl._semanticScopes);
+       } catch (e) {
+         if (e.name === 'SyntaxError') return internalThrow(scope, 'SyntaxError', e.message);
+         throw e;
+diff --git a/compiler/modules.js b/compiler/modules.js
+index 7ec2fb8d50d34d33f3607a1f78915531863073c0..b8c323e08e0c9f985f8fda11b562f61c2dbf3d7f 100644
+--- a/compiler/modules.js
++++ b/compiler/modules.js
+@@ -1,6 +1,7 @@
+ import './prefs.js';
+ import parse from './parser/index.js';
+ import lowerTs from './typescript.js';
++import { refuseIntrinsics } from './refuse.js';
+ 
+ const fs = (typeof process?.version !== 'undefined' ? (await import('node:fs')) : undefined);
+ 
+@@ -249,6 +250,17 @@ const dataSource = url => {
+ // so their globals, inits and namespace bindings can be emitted after the shared ones
+ export const appModuleIds = new Set();
+ export const isAppModule = (file, rel, entry) => !entry && !file.startsWith(RUNTIME_ROOT) && !file.startsWith('data:') && !/(^|\/)(shared-prelude|anchor-ns)\.js$/.test(rel);
++// sproutboat: a module the platform wrote is the entry (the generation's own app.js, or a standalone build's bundle:
++// its author's own code), the runtime, and the shared prelude and anchor beside the entry. Anything else (an app's
++// worker.js, a `data:` module, an import of either) may not name the compiler's intrinsics (refuse.js).
++// The two names are compared as real paths: a temp dir under a symlink (/var on macOS) reaches the loader as both spellings.
++const realPath = p => { try { return fs.realpathSync(p); } catch { return p; } };
++export const isUntrusted = (file, entryDir, entry) => {
++  if (entry || file.startsWith(RUNTIME_ROOT + '/')) return false;
++  if (file.startsWith('data:') || !/(^|\/)(shared-prelude|anchor-ns)\.js$/.test(file)) return true;
++  const real = realPath(file), dir = realPath(entryDir);
++  return real !== dir + '/shared-prelude.js' && real !== dir + '/anchor-ns.js';
++};
+ export const isEsmSource = (file, src) => {
+   if (/\.m[jt]s$/.test(file) || file.startsWith('data:')) return true;
+   if (/\.c[jt]s$/.test(file)) return false;
+@@ -754,6 +766,7 @@ const vmWrapper = (code, params, id) => {
+   let body;
+   try {
+     body = params ? [ { type: 'ReturnStatement', argument: parse(`(function (${params.join(',')}) {\n${code}\n})`, { module: false }).body[0].expression } ] : parse(code, { module: false }).body;
++    refuseIntrinsics(body, 'code given to vm');
+   } catch (e) {
+     if (e.name !== 'SyntaxError') throw e;
+     return { type: 'NewExpression', callee: ident('SyntaxError'), arguments: [ literal(e.message) ] };
+@@ -787,6 +800,7 @@ const vmModule = (code, id) => {
+   let body;
+   try {
+     body = parse(code, { module: true }).body;
++    refuseIntrinsics(body, 'a vm module');
+   } catch (e) {
+     if (e.name !== 'SyntaxError') throw e;
+     return { type: 'NewExpression', callee: ident('SyntaxError'), arguments: [ literal(e.message) ] };
+@@ -947,6 +961,7 @@ export default (entrySource, entryFile, opts = {}) => {
+     mod.esm = entry ? !opts.script && !opts.cjs && !/\.c[jt]s$/.test(file) : isEsmSource(file, source);
+     // cjs code is a function body to node
+     const ast = parse(source, { module: mod.esm, ts, topReturn: !mod.esm && !(entry && opts.script) });
++    if (isUntrusted(file, entryDir, entry)) refuseIntrinsics(ast, file.startsWith('data:') ? 'a data: module' : `the module ${rel}`);
+     if (ts) lowerTs(ast);
+     mod.body = ast.body;
+     literalImports(mod.body);
+diff --git a/compiler/refuse.js b/compiler/refuse.js
+new file mode 100644
+index 0000000000000000000000000000000000000000..00406ee74c0695f78d56932c291bea63345982d8
+--- /dev/null
++++ b/compiler/refuse.js
+@@ -0,0 +1,49 @@
++import './prefs.js';
++
++// sproutboat: code compiled on someone else's behalf never names the compiler's own intrinsics.
++//
++// `Porffor.c` puts its template text verbatim into the C output, and `Porffor.IR`, `Porffor.malloc`, `Porffor.link`,
++// `Porffor.dlopen` and the global `__Porffor_*` / `__<Builtin>_*` functions are as raw. All of them are resolved
++// statically, from identifiers, so this refuses the identifiers: in every module the platform did not write (see
++// `isUntrusted` in modules.js) and in the code of every compile-time `eval`, `Function` and `vm` source. The check is on
++// the AST, so strings and comments never trigger it, and unicode escapes are already decoded by the parser.
++//
++// `--sb-allow-intrinsics` (exactly that flag) switches it off: the platform's own template compile, runtime development.
++export const REFUSED_MARK = 'SB_INPUT_REFUSED';
++// What a builder reports (TOOLCHAIN.json `intrinsic_refusal`): the feature level of this tree. @sproutboat/toolchain's INTRINSIC_REFUSAL says what is expected.
++export const REFUSAL_LEVEL = 1;
++
++// `Porffor` itself, and the builtin namespaces' dunder names: __Porffor_malloc, __Array_prototype_join,
++// __ecma262_ToString, __Uint8Array___proto__, __RegExp_$1$get ... A name that is only a flag, `__DEV__`, `__proto__`,
++// `__esModule`, `__dirname`, has no letter after its second underscore and passes.
++const INTRINSIC = /^__[A-Za-z][A-Za-z0-9]*_(?!_*$)/;
++export const isIntrinsicName = name => name === 'Porffor' || INTRINSIC.test(name);
++
++const SKIP = new Set([ 'start', 'end', 'loc', 'range' ]);
++
++const find = node => {
++  const stack = [ node ];
++  while (stack.length) {
++    const n = stack.pop();
++    if (n === null || typeof n !== 'object') continue;
++    if (Array.isArray(n)) { for (let i = 0; i < n.length; i++) stack.push(n[i]); continue; }
++    if (n.type === 'Identifier' && typeof n.name === 'string' && isIntrinsicName(n.name)) return n;
++    for (const key in n) {
++      if (key[0] === '_' || SKIP.has(key)) continue;
++      const v = n[key];
++      if (v !== null && typeof v === 'object') stack.push(v);
++    }
++  }
++  return null;
++};
++
++/** Throws when `ast` names an intrinsic. `what` says whose code it was (a module path, `eval`, `Function`, `vm`). Returns `ast`. */
++export const refuseIntrinsics = (ast, what) => {
++  if (Prefs.sbAllowIntrinsics === true) return ast;
++  const hit = find(ast);
++  if (hit) {
++    const at = typeof hit.start === 'number' ? ` at offset ${hit.start}` : '';
++    throw new Error(`${REFUSED_MARK}: ${what} uses the compiler's internal \`${hit.name}\`${at}. Porffor.c and the other Porffor intrinsics (Porffor.IR, Porffor.malloc, __Porffor_*, __<Builtin>_*) are not available here`);
++  }
++  return ast;
++};
+diff --git a/compiler/semantic.js b/compiler/semantic.js
+index 020512748ddc429752a792319e501f6d9a570f5d..84d0141510837324fd209a1c952a73be5dc42ba4 100644
+--- a/compiler/semantic.js
++++ b/compiler/semantic.js
+@@ -1,4 +1,5 @@
+ import parse from './parse.js';
++import { refuseIntrinsics } from './refuse.js';
+ import { TYPES } from './types.js';
+ 
+ const varId = name => {
+@@ -350,7 +351,7 @@ const parseEval = node => {
+   }
+ 
+   try {
+-    const body = semantic(semantic.objectHack(parse(code, null, context)), node._semanticScopes, !node._indirectEval).body;
++    const body = semantic(semantic.objectHack(refuseIntrinsics(parse(code, null, context), 'code given to eval')), node._semanticScopes, !node._indirectEval).body;
+     // eval code's function declarations are initialized before it runs
+     let at = 0;
+     while (at < body.length && body[at].directive) at++;
