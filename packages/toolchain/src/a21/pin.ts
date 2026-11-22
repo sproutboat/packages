@@ -59,3 +59,11 @@ export function porfforA21Version(channel: PorfforA21Channel = CURRENT_ALPHA): s
   const p = PORFFOR_A21_PINS[channel];
   return `${p.channel} (${p.commit})`;
 }
+
+/**
+ * The feature level of the compiler's refusal of its own intrinsics in compiled app code (series patch 0026,
+ * `compiler/refuse.js`): `Porffor`, `__Porffor_*` and `__<Builtin>_*` named by a module that is not the entry, the runtime or
+ * the shared prelude, or by an `eval`, `Function` or `vm` source, fail the compile with `SB_INPUT_REFUSED`. A build host
+ * records the level of the tree it ships; a test checks this number against the shipped tree's `REFUSAL_LEVEL`.
+ */
+export const INTRINSIC_REFUSAL = 1;
