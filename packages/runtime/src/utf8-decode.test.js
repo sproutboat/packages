@@ -1,7 +1,5 @@
-// sproutboat #181 — __sbFromUtf8 lives inline in native-fetch-prelude.js (the
-// prelude is prepended as text and cannot import), so this test lifts that one
-// pure-JS function out and exercises it directly. If it moves or its boundary
-// markers change, this fails loudly rather than silently testing nothing.
+// sproutboat #181 - the prelude is prepended as text and cannot import, so this lifts __sbFromUtf8 out and runs it; if its markers change
+// this fails loudly instead of testing nothing.
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -53,25 +51,15 @@ test("empty and pure-ASCII strings are untouched", () => {
   expect(__sbFromUtf8("hello world")).toBe("hello world");
 });
 
-// __sbFromUtf8 builds its result via an array + one join(),
-// not repeated `out +=`. Porffor's strings have no rope/cons optimization, so
-// `+=` in a loop copies the whole accumulated string on every append,
-// making a large decode O(n^2) -- measured as a real ~2.6s stall decoding a
-// 43KB page on sproutboat.com, gone after the array+join rewrite. This is a
-// correctness check (long input still round-trips exactly), not a timing
-// assertion -- CI timing thresholds are flaky; the real perf verification
-// happened against a real compiled binary, documented in the fix commit.
+// __sbFromUtf8 builds its result via an array + one join(): Porffor strings have no rope optimization, so `+=` in a loop is O(n^2) (a real 2.6 s
+// stall decoding a 43KB page). A correctness check (long input round-trips), not a timing assertion: CI timing thresholds are flaky.
 test("a long, multi-chunk body round-trips exactly", () => {
   const chunk = "porffor · src/index.js → 1.25 MB · x86_64-musl ✓ café 🌱 ";
   const text = chunk.repeat(800); // ~46KB, comparable to the real homepage
   expect(__sbFromUtf8(toBytestring(text))).toBe(text);
 });
 
-// __sbRawBodyResponse must decode lazily: eagerly decoding at construction
-// paid the cost of __sbFromUtf8 on every asset/proxied response regardless of
-// whether the handler ever reads it as text, a real perf regression shipped
-// and caught on sproutboat.com (most such responses are handed straight to
-// the client and .text()/.json() are never called).
+// __sbRawBodyResponse must decode lazily: eager decoding paid __sbFromUtf8 on every asset/proxied response, a real regression caught on sproutboat.com.
 const rbrStart = src.indexOf("function __sbRawBodyResponse(");
 const rbrEnd = src.indexOf("// Constant-time compare of two latin1 byte strings.");
 if (rbrStart === -1 || rbrEnd === -1 || rbrEnd < rbrStart) {

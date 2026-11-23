@@ -3,10 +3,8 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// AsyncLocalStorage (design 02, milestone 2): the store follows the control flow across
-// awaits, promise reactions, timers, intervals, microtasks and ctx.waitUntil, and many
-// requests interleaved in one process each see only their own. The expected values are what
-// workerd (nodejs_compat) answers for test/fixtures/als-app.js.
+// AsyncLocalStorage (design 02, milestone 2): the store follows control flow across awaits, promise reactions, timers, microtasks and ctx.waitUntil, and
+// interleaved requests each see only their own. Expected values are what workerd (nodejs_compat) answers for test/fixtures/als-app.js.
 const cli = process.env.SB_CLI;
 if (!cli) {
   console.log("skipped: set SB_CLI to a sproutboat-cli checkout linked to this checkout (it builds the sprouts)");

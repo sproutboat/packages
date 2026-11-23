@@ -4,11 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { drive, startUpstream } from "./concurrent-driver";
 
-// Concurrent requests in one process (design 02, milestone 1). A standalone binary serves many
-// requests at once: they interleave on timers, request and response body streams, KV, D1 and
-// in-worker WebSockets, and each reply must hold only its own request's values (headers, body,
-// cookie, env, ctx, cf, errors, ctx.waitUntil results). The same app and driver run against a
-// sproutd worker (test/concurrency-smoke.py, which serves up to 8 requests per process).
+// Concurrent requests in one process (design 02, milestone 1): replies interleaved on timers, bodies, KV, D1 and WebSockets
+// must each hold only their own request's values. Runs against a sproutd worker too (test/concurrency-smoke.py).
 const cli = process.env.SB_CLI;
 if (!cli) {
   console.log("skipped: set SB_CLI to a sproutboat-cli checkout linked to this checkout (it builds the sprouts)");

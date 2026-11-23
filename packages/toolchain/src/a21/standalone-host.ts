@@ -1,9 +1,6 @@
 /**
- * A host build of a standalone binary, for the tools that compile one on the
- * machine they run on (the runtime's native tests, the monorepo's compat suite, `sproutboat dev`):
- * compose the sources, render the units with the patched alpha compiler, build with the bridge and the
- * server shim (`standalone-build.ts`) against the host's uWebSockets checkout. The CLI's cross builds
- * do the same with zig (`compileSproutA21` in sproutboat-cli).
+ * A host build of a standalone binary, for tools that compile one where they run (native tests, the compat suite, `sproutboat dev`).
+ * The CLI's cross builds do the same with zig (`compileSproutA21` in sproutboat-cli).
  */
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";

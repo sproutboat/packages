@@ -7,22 +7,14 @@ import { bearsslEnv } from "./bearssl";
 import { compileNative } from "./native-compile";
 import { EMPTY_BINDINGS, preludePath, TRANSPORT_MARKER, transportPath, wrapNativeFetchHandler } from "../src/wrap";
 
-// env.ASSETS served from a directory (the host's per-deployment view of the Cloud asset store, SB_ASSETS_DIR=DIR with
-// DIR/manifest.json and DIR/blobs/<sha256>), on COMPILED standalone binaries so the real inline C and the real prelude run:
-//   1. the C helpers (sb_assets_op) on their own: hash validation, O_NOFOLLOW, regular files only, the stat key, limits;
-//   2. a dir-mode app: found / index.html / extensionless / SPA / 404 page / redirects / headers / bytes (whole and streamed,
-//      byte-exact) / a manifest swapped under a running worker / missing and malformed files / hashes that try to leave the view;
-//   3. conditional requests (If-None-Match against "<hash>": list, W/, *, no match) from a Request, init and a bare path, with
-//      a compatibility date before 2026-11-22 left as it was, and the same on baked assets;
-//   4. request paths are percent-decoded before the manifest lookup (non-ASCII names; a malformed escape is a 404, a decoded "/"
-//      adds no segment), a streamed asset can be put in the Cache API and read back byte-exact, and a removed manifest takes its
-//      redirects with it.
+// env.ASSETS served from a directory (SB_ASSETS_DIR=DIR with manifest.json and blobs/<sha256>) on COMPILED standalone binaries: 1. the C helpers (sb_assets_op): hash
+// validation, O_NOFOLLOW, regular files only, limits; 2. a dir-mode app (found, index.html, SPA, 404 page, redirects, headers, byte-exact bodies, a manifest swapped under a
+// running worker, hashes that try to leave the view); 3. conditional requests (If-None-Match), compat before 2026-11-22 unchanged; 4. percent-decoding, Cache API round trip.
 const work = mkdtempSync(join(tmpdir(), "sb-native-assets-dir-"));
 const procs: ReturnType<typeof Bun.spawn>[] = [];
 const sha = (b: Buffer | string) => createHash("sha256").update(b).digest("hex");
 const MiB = 1024 * 1024;
 
-// ---------------------------------------------------------------- 1. the C helpers
 {
   const transport = readFileSync(new URL("../src/transport-embedded.js", import.meta.url), "utf8");
   const start = transport.indexOf("static int sb_assets_hex(");
@@ -169,7 +161,6 @@ int main(void) {
   console.log("assets C helpers: ok");
 }
 
-// ---------------------------------------------------------------- 2 and 3. compiled apps
 const handler = `export default {
   async fetch(request, env) {
     const url = new URL(request.url);

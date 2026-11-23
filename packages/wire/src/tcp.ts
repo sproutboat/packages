@@ -1,31 +1,7 @@
 /**
- * The TCP tunnel behind `connect()` from `cloudflare:sockets` on the broker transport.
- *
- * A sprout opens a second loopback connection to the broker (the first carries binding
- * calls) and sends one v1 frame, `{ v: 1, token, op: "tcp.open", host, port, mode,
- * servername }`, where mode is `off`, `on` (TLS from the first byte) or `starttls`. The
- * broker answers with one plain JSON frame, `{ ok: true }` or `{ ok: false, error }` (a bad
- * token, too many open sockets, port 25, a malformed target), and from then on both ends
- * speak typed frames, `[u8 type][u32 LE length][payload]`:
- *
- *   sprout -> broker   1 data, 2 startTls (payload: server name), 3 shutdown the write
- *                      side, 7 close
- *   broker -> sprout   1 data, 4 error (payload: reason), 5 connected, 6 TLS done,
- *                      7 closed (the origin connection is gone), 8 end of input (the
- *                      origin half-closed; writes still go through)
- *
- * The origin is resolved here, every address vetted exactly as `fetch()` vets it (private
- * ranges refused unless `SB_EGRESS_ALLOW` says otherwise), and the connection goes to the
- * vetted address, never the name. A refusal or a failed connect arrives as an error frame.
- * TLS (`on`, and `startTls()`) ends in the broker, verified against the server name.
- *
- * Backpressure is TCP's: when the origin cannot take bytes the sprout's socket is paused
- * (its writer blocks), and when the sprout cannot take bytes the origin is paused. Nothing
- * queues beyond one chunk each way, plus a bounded buffer while the origin is connecting.
- *
- * With an egress service configured the broker holds no network of its own: it relays the
- * tunnel, byte for byte, to the service's tunnel endpoint (`listenTunnelService`), which runs
- * this same code with the service's token and does the vetting and connecting.
+ * The TCP tunnel behind `connect()` from `cloudflare:sockets`: the sprout opens a second loopback connection, sends one v1
+ * `tcp.open` frame, gets one JSON ack, then both ends speak typed frames `[u8 type][u32 LE length][payload]`. Every address
+ * is vetted as `fetch()` vets it and the connection goes to the vetted address, never the name; with an egress service the broker only relays.
  */
 import { timingSafeEqual } from "node:crypto";
 import { lookup } from "node:dns/promises";
@@ -36,10 +12,7 @@ import { egressRefusal } from "@sproutboat/runtime";
 import type { Resolve } from "./egress";
 import { isSafeInteger, isString, jsonObject, parseJsonValue, type JsonObject, type JsonValue } from "./json";
 
-/**
- * The TLS options for an origin. Like the embedded transport's `SB_CA_BUNDLE`, a PEM file named in
- * the environment adds roots to the built-in set; it never removes any or disables verification.
- */
+/** TLS options for an origin: a PEM named in the environment (like `SB_CA_BUNDLE`) adds roots, never removes any or disables verification. */
 function tlsTrust(given: tls.ConnectionOptions | undefined): tls.ConnectionOptions {
   if (given?.ca !== undefined) return given;
   const path = process.env.SB_CA_BUNDLE;
@@ -60,16 +33,12 @@ export const TCP_TLS_DONE = 6;
 export const TCP_CLOSE = 7;
 export const TCP_EOF = 8;
 
-/** Open sockets one deployment may hold at once, and how long a connect may take. */
 export const TCP_MAX_OPEN = 16;
 export const TCP_CONNECT_TIMEOUT_MS = 15_000;
-/** The largest typed frame the sprout may send. */
 const MAX_TYPED_FRAME = 1024 * 1024;
-/** Bytes held for an origin that is still connecting before the sprout is paused. */
 const PENDING_LIMIT = 256 * 1024;
 const V1 = 1;
 
-/** One typed frame. */
 export function typedFrame(type: number, payload: Uint8Array = new Uint8Array(0)): Buffer {
   const out = Buffer.allocUnsafe(5 + payload.length);
   out.writeUInt8(type, 0);
@@ -78,7 +47,6 @@ export function typedFrame(type: number, payload: Uint8Array = new Uint8Array(0)
   return out;
 }
 
-/** The plain `[u32 LE length][json]` reply to the opening frame. */
 function jsonFrame(obj: JsonObject): Buffer {
   const body = Buffer.from(JSON.stringify(obj), "utf8");
   const out = Buffer.allocUnsafe(4 + body.length);
@@ -87,7 +55,6 @@ function jsonFrame(obj: JsonObject): Buffer {
   return out;
 }
 
-/** The opening frame as a sprout (or a relaying broker) writes it, length header included. */
 export function openFrame(head: JsonObject): Buffer {
   const json = Buffer.from(JSON.stringify({ v: 1, ...head }), "utf8");
   const out = Buffer.allocUnsafe(4 + 5 + json.length);
@@ -98,15 +65,9 @@ export function openFrame(head: JsonObject): Buffer {
   return out;
 }
 
-/** The largest opening frame (the head's length prefix excluded) a listener accepts. */
 export const MAX_TCP_HEAD = 64 * 1024;
 
-/**
- * The head of a `tcp.open` payload (marker, json length, json), or null when it is another frame
- * or not a well-formed head. This runs on bytes nobody has authenticated yet, so it never throws:
- * JSON that does not parse (or nests too deep for the parser) is "not a head", like any other
- * frame, and the caller answers it.
- */
+/** The head of a `tcp.open` payload, or null. It runs on unauthenticated bytes, so it never throws: unparseable or too-deep JSON is "not a head". */
 export function parseTcpOpen(payload: Buffer): JsonObject | null {
   if (payload.length < 5 || payload[0] !== V1) return null;
   const jsonLen = payload.readUInt32LE(1);
@@ -121,7 +82,6 @@ export function parseTcpOpen(payload: Buffer): JsonObject | null {
   }
 }
 
-/** What a tunnel needs of the sprout's connection; a `Bun.Socket` is one. */
 export type TunnelPeer = {
   write(data: Uint8Array): number;
   end(): number | void;
@@ -129,7 +89,6 @@ export type TunnelPeer = {
   resume(): void;
 };
 
-/** The listener forwards the sprout socket's events to its tunnel. */
 export type Tunnel = {
   data(chunk: Buffer): void;
   drain(): void;
@@ -137,9 +96,7 @@ export type Tunnel = {
 };
 
 export type TcpOptions = {
-  /** Sprouts (or, on the egress service, brokers) must present it in the opening frame. */
   token: string;
-  /** `SB_EGRESS_ALLOW`, split. */
   allow?: readonly string[];
   resolve?: Resolve;
   maxOpen?: number;
@@ -251,7 +208,6 @@ export function createTcpTunnels(opts: TcpOptions): TcpTunnels {
       return tunnel;
     };
 
-    // --- toward the sprout
     const pauseOrigin = () => {
       if (!origin || originPaused) return;
       originPaused = true;
@@ -293,7 +249,6 @@ export function createTcpTunnels(opts: TcpOptions): TcpTunnels {
       if (out.length === 0) peer.end();
     };
 
-    // --- toward the origin
     const pausePeer = () => {
       if (peerPaused) return;
       peerPaused = true;
@@ -366,7 +321,6 @@ export function createTcpTunnels(opts: TcpOptions): TcpTunnels {
       origin?.destroy();
     }
 
-    // --- typed frames from the sprout
     function startTls(servername: string) {
       if (head.mode !== "starttls" || upgraded || !origin || !connected) {
         send(typedFrame(TCP_ERROR, Buffer.from("startTls is not available on this socket")));
@@ -423,7 +377,6 @@ export function createTcpTunnels(opts: TcpOptions): TcpTunnels {
       frames();
     }
 
-    // --- admission
     if (!sameToken(head.token, opts.token)) {
       if (!sendAck) {
         peer.write(typedFrame(TCP_ERROR, Buffer.from("unauthorized")));
@@ -453,7 +406,6 @@ export function createTcpTunnels(opts: TcpOptions): TcpTunnels {
     live.add(tunnel);
     if (rest.length > 0) data(rest);
 
-    // --- connecting
     void (async () => {
       try {
         if (relaying) {

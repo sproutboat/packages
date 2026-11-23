@@ -1,26 +1,8 @@
 #!/usr/bin/env bun
 /**
- * Runs the `test:native-*` package scripts a few at a time instead of one after
- * another. Each one compiles a handler with Porffor and drives the binary, so
- * they spend most of their time in the C compiler and parallelise well.
- *
- *   bun scripts/test-native.ts                  # every test:native-* script
- *   bun scripts/test-native.ts crypto base64    # only these (prefix optional)
- *
- * NATIVE_TEST_CONCURRENCY sets how many run at once (default 4).
- * NATIVE_TEST_TIMEOUT_MS kills a script that runs longer (default 10 minutes).
- *
- * The runner unpacks the vendored patched Porffor tree up front, in the normal cache, so every script finds
- * it there. Set SPROUTBOAT_PORFFOR_DIR to point all of them at a different tree.
- *
- * The first native compile on a machine also fetches uWebSockets, patches it and
- * builds uSockets.a in ~/.cache/porffor/deps, shared by every compile. Four
- * compilers doing that at once trip over each other (CI failed with uSockets
- * sources missing mid-build), so the quickest script runs alone first and the
- * rest start once it has finished. After that the compilers only read it.
- *
- * The scripts bind their ports with a port-0 probe (`freePort()`) or `port: 0`,
- * never a fixed number, so running them side by side does not make them collide.
+ * Runs the `test:native-*` scripts a few at a time (`bun scripts/test-native.ts [names]`); NATIVE_TEST_CONCURRENCY (default 4),
+ * NATIVE_TEST_TIMEOUT_MS (default 10 minutes), SPROUTBOAT_PORFFOR_DIR points all at another Porffor tree. The quickest script runs alone first:
+ * four first-time compiles building uWebSockets in ~/.cache/porffor/deps at once tripped over each other (CI: uSockets sources missing).
  */
 import { closeSync, mkdtempSync, openSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";

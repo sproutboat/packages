@@ -3,11 +3,8 @@ import { mkdtemp, readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// The handle table of the embedded transport (plan 018 phase 1), compiled directly against the system SQLite:
-// the slot LRU, the single close function, the cache sizing rules, the object-database slot count.
-// A C driver runs one scenario per process (the table is process-global) and prints one JSON line.
-// SB_TEST_SQLITE_DIR=DIR (sqlite3.h and a built sqlite3.o, the amalgamation the host uses) runs it against that instead;
-// SB_DB_TABLE_BENCH=1 also prints the E7 timings (adaptive cache against a fixed 2 MiB).
+// The handle table of the embedded transport (plan 018 phase 1) compiled against the system SQLite: slot LRU, single close function, cache sizing,
+// object-database slot count. A C driver runs one scenario per process (the table is process-global). SB_TEST_SQLITE_DIR=DIR, SB_DB_TABLE_BENCH=1.
 const transport = await readFile(new URL("../src/transport-embedded.js", import.meta.url), "utf8");
 const ltxStart = transport.indexOf("// BEGIN LTX NATIVE"),
   ltxEnd = transport.indexOf("// END LTX NATIVE", ltxStart);

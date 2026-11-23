@@ -1,9 +1,4 @@
-/**
- * `@sproutboat/toolchain/a21`: the Porffor line, on one alpha at a time (alpha 25). The pin of the patched tree
- * (upstream commit, patch series hash, tarball sha256), its fingerprint, the acquire step that unpacks the
- * vendored patched tarball, and the standalone build with its vendored server sources
- * (`standalone-server/`). The standalone channel is alpha 25 (`standaloneChannel`).
- */
+/** `@sproutboat/toolchain/a21`: the Porffor line (alpha 25): pin, fingerprint, acquire, and the standalone build with its vendored server sources. */
 export * from "./pin";
 export * from "./fingerprint";
 export * from "./acquire";

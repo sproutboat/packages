@@ -5,10 +5,8 @@ import { join } from "node:path";
 import { compileNative } from "./native-compile";
 import { preludePath, TRANSPORT_MARKER, transportPath, wrapNativeFetchHandler } from "../src/wrap";
 
-// sproutd #22: __sbFromUtf8 and __sbToBytes run in C (__sbFromUtf8Native, __sbToBytesNative).
-// They must give exactly what the JS loops gave, and a body of megabytes must not take
-// hundreds of megabytes of heap (the JS made one string per character: a 5 MiB R2 object
-// read with text() took about 400 MiB).
+// sproutd #22: __sbFromUtf8 and __sbToBytes run in C and must give exactly what the JS loops gave, and a multi-megabyte body must not take
+// hundreds of MB of heap (the JS made one string per character: a 5 MiB R2 text() read took about 400 MiB).
 const handler = `const bytes = (list) => { let s = ""; for (const b of list) s += String.fromCharCode(b); return s; };
 const codes = (s) => { const out = []; for (let i = 0; i < s.length; i++) out.push(s.charCodeAt(i)); return out; };
 export default {fetch(request) {

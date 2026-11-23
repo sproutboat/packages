@@ -1,18 +1,8 @@
 #!/usr/bin/env bun
 /**
- * The standalone server's vendored sources (`packages/toolchain/src/a21/standalone-server/`): the uWebSockets
- * server shim, the web classes, and the patches the uWebSockets checkout is compiled with.
- *
- *   check     no git, no network: the files' content hashes against sources.json
- *   verify    check, then fetch uWebSockets at the pinned commit (git, depth 1), compare the pristine tree with
- *             sources.json, apply the vendored patches, compare the patched tree with sources.json, apply them
- *             again (a no-op) and compare once more
- *
- * The files began as the output of the Porffor alpha 19 patch chain; the commit that vendored them
- * (`toolchain: vendor the standalone server's sources`) still had the chain and ran a verify that compared them with
- * it byte for byte. They are maintained by hand now: edit them, then update sources.json (`write`).
- *
- *   write     recompute the hashes in sources.json from the files (after an edit); needs git and the network
+ * The standalone server's vendored sources (`packages/toolchain/src/a21/standalone-server/`), maintained by hand: edit them, then `write`.
+ *   check = hashes vs sources.json (offline); verify = check, then fetch uWebSockets at the pinned commit and compare pristine and patched trees;
+ *   write = recompute the hashes in sources.json (needs git and the network)
  */
 import { createHash } from "node:crypto";
 import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";

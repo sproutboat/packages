@@ -1,19 +1,6 @@
-// A power-loss simulator for the capture's write path (design 029 stage S1b), after the ALICE/CrashMonkey line of work:
-// record the syscalls of a real run (strace), model what a power cut after any of them leaves on disk, rebuild that disk
-// state in a scratch directory and let the real code recover from it. Linux only (strace, no dm-flakey needed).
-//
-// The model is the pessimistic POSIX one, with the one ext4/xfs behaviour SQLite itself relies on:
-//   - a file's bytes are durable up to its last fsync/fdatasync; writes after it are volatile;
-//   - a namespace change (create, link, unlink, rename, mkdir) is volatile until the DIRECTORY it is in is fsynced; the
-//     exception is that fsync of a file also makes the file's own creation (its directory entry as of creation)
-//     durable (without it SQLite's own WAL could vanish after its first fsync, which no filesystem we run on does);
-//   - "strict" mode (A): the surviving state is exactly the durable one: every volatile byte and entry is lost;
-//   - "torn" mode (B, seeded): the worst the filesystem may do on top: a random subset of the volatile writes of each file
-//     survives (in any order, so a later write may land while an earlier one is lost; but not past a lost truncate of the same
-//     file: size changes are journaled in order) and a random prefix of the volatile
-//     namespace changes of each directory survives (a journal commits a prefix, so renames keep their order);
-//   - memory-mapped files (the WAL index, -shm) are never durable and are removed from the image: SQLite rebuilds it.
-// It is stricter than any one real filesystem; code that survives it needs no assumption about writeback order.
+// A power-loss simulator for the capture's write path (design 029 stage S1b): record a real run's syscalls (strace, Linux only), model what a cut
+// after any of them leaves on disk (strict = only fsynced bytes and directory entries survive; torn = a seeded random subset of volatile writes and
+// a prefix of volatile namespace changes per directory), rebuild it in a scratch directory and let the real code recover. Stricter than any one filesystem.
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 

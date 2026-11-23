@@ -1,9 +1,4 @@
-/**
- * The one JSON contract the CLI decodes external payloads through: registry
- * responses, control-plane responses, broker request bodies. Parse at the I/O
- * boundary with `parseJsonValue`, then narrow with these guards — nothing
- * downstream should see an unparsed value.
- */
+/** The one JSON contract the CLI decodes external payloads through: parse at the I/O boundary with `parseJsonValue`, then narrow with these guards. */
 export type JsonValue = string | number | boolean | null | JsonObject | JsonValue[];
 export type JsonObject = { [key: string]: JsonValue };
 

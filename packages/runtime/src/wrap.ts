@@ -1,81 +1,53 @@
 /**
- * The build-independent half of sprout compilation: the binding/trigger wrapper
- * that turns a user's `export default { fetch }` into a native-fetch module, plus
- * the `Bindings` shape and the `SPROUTBOAT_*_JSON` env readers.
- *
- * This module has no imports on purpose — the monorepo consumes it via the
- * `sproutboat/runtime/wrap` export to drive its own (host-native, non-musl)
- * compile path without pulling in `toolchain.ts` / `patch-porffor.ts`.
+ * The build-independent half of sprout compilation: the wrapper that turns `export default { fetch }` into a
+ * native-fetch module, plus `Bindings` and the env readers. No imports on purpose: the monorepo consumes it via the
+ * `@sproutboat/runtime/wrap` export for its host-native (non-musl) compile path, without the toolchain.
  */
 
-/** The prelude file (Web API shims + broker binding shim + trigger dispatcher).
- *  It is read as text and string-prepended before Porffor sees it, never
- *  imported — callers do `readFile(preludePath, "utf8")`. */
+/** Read as text and string-prepended before Porffor sees it, never imported. */
 export const preludePath = new URL("./native-fetch-prelude.js", import.meta.url);
 
 /**
- * #15 — the two transports the prelude can be built with.
- *
- * Both define `__sbCall(reqJson) -> replyJson` and nothing else; every binding
- * shim above that line is identical, which is what lets one conformance suite
- * hold both honest. `broker` talks to the per-deployment broker over loopback
- * (deployed, dev, phase-0 standalone); `embedded` compiles SQLite into the
- * sprout and needs no second process at all.
+ * #15 - the two transports the prelude can be built with. Both define `__sbCall(reqJson) -> replyJson` and nothing
+ * else, so one conformance suite holds both honest: `broker` talks to the per-deployment broker over loopback,
+ * `embedded` compiles SQLite into the sprout.
  */
 export type Transport = "broker" | "embedded";
 export const transportPath = (transport: Transport): URL =>
   new URL(transport === "embedded" ? "./transport-embedded.js" : "./transport-broker.js", import.meta.url);
 
-/** Where the prelude expects its transport spliced in. */
 export const TRANSPORT_MARKER =
   "// TRANSPORT: wrap.ts splices one of transport-broker.js / transport-embedded.js here.";
 
-// The server honours $PORT at runtime (patches/porffor-render.patch); this baked
-// value is only a fallback for a directly-run binary.
+// The server honours $PORT at runtime (patches/porffor-render.patch); this is only the fallback.
 const DEFAULT_PORT = 8080;
 
 /**
- * What an artifact with no `compatibilityDate` means. Artifacts built before
- * the field existed keep the semantics of that day forever, because the binary
- * is immutable and `rollback` can reactivate it at any time.
- *
- * How to use it: when a runtime behaviour has to change in a way that would
- * break a deployed handler, don't change it unconditionally — gate it in the
- * prelude on `__sbCompat >= "YYYY-MM-DD"` (ISO dates compare correctly as
- * strings) and document the flip date. Old binaries carry their old date and
- * keep the old behaviour; a project opts in by moving `compatibility_date` in
- * its `sproutboat.jsonc` and rebuilding.
+ * What an artifact with no `compatibilityDate` means. Binaries are immutable and `rollback` can reactivate one at
+ * any time, so a behaviour change that could break a deployed handler is gated in the prelude on
+ * `__sbCompat >= "YYYY-MM-DD"`; a project opts in by moving `compatibility_date` and rebuilding.
  */
 export const BASELINE_COMPATIBILITY_DATE = "2026-08-26";
 
-/**
- * Binding names a project declares. `do` maps a binding name to a Durable Object
- * class name; `crons` are schedule expressions with no name.
- */
+/** Binding names a project declares. `do` maps a binding name to a Durable Object class name. */
 export type Bindings = {
   kv: string[];
   secrets: string[];
   d1: string[];
   r2: string[];
   queues: string[];
-  /** Each queue binding's queue name and consumer settings (`queueSettings` in
-   *  @sproutboat/config). Absent from older artifacts: every queue is then named by its
-   *  binding, with the default settings. */
+  /** Queue name and consumer settings per binding (`queueSettings` in @sproutboat/config). Absent from older artifacts: each queue is then named by its binding, default settings. */
   queueConfig?: QueueSettings[];
   analytics: string[];
   do: Array<{ binding: string; className: string }>;
-  /** #48 — worker-to-worker: binding name -> the project it calls. The hostname
-   *  it resolves to is a runtime input, not part of the artifact. */
+  /** #48 - worker-to-worker: binding -> project. The hostname is a runtime input, not part of the artifact. */
   services: Array<{ binding: string; service: string }>;
   crons: string[];
-  /** #69 — rate limiters: `env.<binding>.limit({ key }) -> { success }`, a
-   *  fixed window of `limit` calls per `period` seconds, per key. */
   ratelimiters: Array<{ binding: string; limit: number; period: number }>;
   /** Static-asset binding name for `env.<NAME>.fetch(request)`; `""` when assets are edge-only. */
   assets: string;
 };
 
-/** One queue binding's name and consumer settings; unset settings are absent. */
 export type QueueSettings = {
   binding: string;
   queue: string;
@@ -100,7 +72,6 @@ export const EMPTY_BINDINGS: Bindings = {
   assets: "",
 };
 
-/** A default export something can invoke: fetch(), scheduled(), queue(), or a WorkerEntrypoint (RPC). */
 export function hasEntryHandler(source: string): boolean {
   return /\b(fetch|scheduled|queue)\s*\(/.test(source) || /\bextends\s+WorkerEntrypoint\b/.test(source);
 }
@@ -121,28 +92,19 @@ function hasBindings(b: Bindings): boolean {
 }
 
 /**
- * Turn the module's exports into plain top-level declarations, so the handler
- * object is reachable as `__sbHandlers` and Durable Object classes stay
- * addressable by name.
- *
- * Two shapes reach us. A hand-written file exports inline
- * (`export default { fetch }`), while a bundled one declares everything first
- * and re-exports at the end (`export { src_default as default, Counter }`) —
- * #89 made the second shape the normal case. Returns null when neither matches.
+ * Turn the module's exports into plain top-level declarations so the handler is reachable as `__sbHandlers` and
+ * Durable Object classes stay addressable. Two forms reach us: inline (`export default { fetch }`) and a bundle's
+ * trailing `export { src_default as default, Counter }` (the normal case since #89). Returns null when neither matches.
  */
 /**
- * `cloudflare:workers` is not a module here: WorkerEntrypoint, DurableObject, RpcTarget
- * and env are globals the prelude defines. Each import of it becomes a destructuring
- * of globalThis, `as` renames included, so the handler's names still resolve. The CLI
- * leaves the specifier external for this.
+ * `cloudflare:workers` is not a module here: its names are prelude globals, so each import becomes a
+ * destructuring of globalThis (`as` renames included). The CLI leaves the specifier external for this.
  */
 export function inlineWorkersImports(source: string): string {
-  // `cloudflare:sockets` (compatibility date 2026-11-17): connect() lives on a prelude global.
-  // postgres/cf loads it lazily: `await import("cloudflare:sockets")`.
+  // `cloudflare:sockets` (compat 2026-11-17): connect() is a prelude global; postgres/cf loads it lazily.
   source = source.replace(/\bimport\(\s*["'`]cloudflare:sockets["'`]\s*\)/g, "Promise.resolve(globalThis.__sbSockets)");
-  // The dynamic form of cloudflare:workers (Alchemy: `import("cloudflare:workers").catch(() => ({ env: {} }))`)
-  // resolves to a namespace of the same four names the static form can destructure. Read when the
-  // import runs, so a handler that imports at module top level sees the env the tail already set.
+  // The dynamic form of cloudflare:workers (Alchemy) resolves to a namespace of the same four names. Read when the
+  // import runs, so a handler importing at module top level sees the env the tail already set.
   source = source.replace(
     /\bimport\(\s*["'`]cloudflare:workers["'`]\s*\)/g,
     "Promise.resolve({ env: globalThis.env, WorkerEntrypoint: globalThis.WorkerEntrypoint, DurableObject: globalThis.DurableObject, RpcTarget: globalThis.RpcTarget })",
@@ -171,7 +133,7 @@ export function inlineWorkersImports(source: string): string {
   );
 }
 
-/** What `import.meta.url` is in a compiled app: a stable name, as in workerd, never the build machine's path. */
+/** A stable name, as in workerd, never the build machine's path. */
 export const IMPORT_META_URL = "file:///bundle/index.js";
 
 const HAS_IMPORT_META = /(?<![$\w])(?<![^.]\.)import\.meta\b/;
@@ -181,11 +143,9 @@ const IMPORT_META_SCAN =
   /"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\.)*`|\/\/[^\n]*|\/\*[\s\S]*?\*\/|(?<![$\w])(?<![^.]\.)import\.meta\b/g;
 
 /**
- * `import.meta` as workerd has it: `url`, `main` and `resolve()`, and nothing else (`import.meta.env` is
- * Vite's, `dirname`/`filename` are Node's: both read `undefined`). Alchemy reads `import.meta.env`.
- * Porffor would turn any use but `.url`/`.filename`/`.dirname`/`.main` into a load of `node:module`, whose C needs
- * the ada URL header the host build does not have, and bakes the build directory into `url`. The bundled
- * handler is one module, so one object serves every use. Returns the body unchanged when it has none.
+ * `import.meta` as workerd has it: `url`, `main` and `resolve()` only (`env` is Vite's, `dirname`/`filename` Node's: they
+ * read `undefined`). Porffor would turn any other use into a load of `node:module` (its C needs the ada URL header the
+ * host build lacks) and bakes the build directory into `url`. The bundle is one module, so one object serves every use.
  */
 export function inlineImportMeta(body: string): string {
   if (!HAS_IMPORT_META.test(body)) return body;
@@ -217,8 +177,7 @@ export function neutraliseExports(source: string): string | null {
       .replace(/^(\s*)export\s+default\s*/m, "$1const __sbHandlers = ")
       .replace(/^export\s+(async\s+function|function|class|const|let|var)\b/gm, "$1");
   }
-  // Not anchored to a line: a minified bundle puts the whole module on one
-  // line. Bundlers emit exactly one such block, at the end.
+  // Not anchored to a line: a minified bundle is one line. Bundlers emit exactly one such block, at the end.
   const blocks = [...source.matchAll(/export\s*\{([^}]*)\}\s*;?/g)];
   const block = blocks[blocks.length - 1];
   if (block === undefined) return null;
@@ -233,8 +192,7 @@ export function neutraliseExports(source: string): string | null {
     const local = parts[1];
     const exported = parts[2] ?? local;
     if (exported === "default") handler = local;
-    // `export { Counter as Counter }` needs no alias; a renamed one does, so
-    // `durable_objects` in the config can still name the class it expects.
+    // `export { Counter as Counter }` needs no alias; a renamed one does, so `durable_objects` can name the expected class.
     else if (exported !== local) aliases.push(`const ${exported} = ${local};`);
   }
   if (handler === null) return null;
@@ -242,32 +200,14 @@ export function neutraliseExports(source: string): string | null {
 }
 
 /**
- * Build the final native-fetch module: the prelude (Web API shims + the broker
- * binding shim + the trigger dispatcher), then `const env = {…}` with the baked
- * `vars`, then — if any binding is declared — one `__sbInstallBindings(env, …)`
- * line, then the user's source with its `export` keywords neutralised (so its
- * `export default {…}` becomes a plain object we can hand to the dispatcher),
- * then our single `export default { fetch }` that routes every request through
- * `__sbEntry` (HTTP → `handlers.fetch`; `x-sb-trigger` → scheduled / queue / DO).
- *
- * With no bindings and no `scheduled`/`queue`/DO the output behaves exactly like
- * a plain `export default { fetch }` sprout.
- *
- * `port` is only the baked fallback in `export default { port }`; the runtime
- * reads `$PORT` first. The monorepo's bench path overrides it.
- *
- * ponytail: the sprout process is long-lived, so a handler that mutates `env`
- * leaks that change to later requests. Freeze upstream once Porffor supports
- * Object.freeze in native mode.
+ * Build the final native-fetch module: prelude, `const env = {…}` with the baked `vars`, one `__sbInstallBindings`
+ * line if any binding is declared, the user's source with `export` neutralised, then our single `export default { fetch }`
+ * routing every request through `__sbEntry`. `port` is only the baked fallback; the runtime reads `$PORT` first.
  */
 /**
- * What a handler needs of crypto.subtle: `"always"` (the default for the embedded transport) leaves the prelude as it is, which
- * is what a shared template needs (sproutd compiles apps against one prelude). `"auto"` drops the
- * workerd-style crypto.subtle (its JavaScript, and the BearSSL and Monocypher C behind it) from a
- * handler whose source never mentions `subtle`, `DigestStream` or `CryptoKey`: such a handler cannot
- * reach it, and the code is about 330 KB of a 5.3 MB standalone binary and about 2 s of its build.
- * A handler that reaches crypto.subtle without naming it (a computed property name) gets the
- * digest/HMAC/PBKDF2 subset that earlier dates have.
+ * What a handler needs of crypto.subtle: `"always"` leaves the prelude as it is (a shared template needs it). `"auto"` drops it
+ * (about 330 KB of a 5.3 MB binary, 2 s of build) from a handler that never mentions `subtle`, `DigestStream` or
+ * `CryptoKey`; one reaching it through a computed name gets only the digest/HMAC/PBKDF2 subset of earlier dates.
  */
 export type SubtleMode = "always" | "auto";
 
@@ -275,7 +215,6 @@ const SUBTLE_BLOCKS: Array<[string, string]> = [
   ["// SUBTLE-JS:BEGIN", "// SUBTLE-JS:END"],
   ["// SUBTLE:BEGIN", "// SUBTLE:END"],
 ];
-/** The prelude without workerd-style crypto.subtle. Throws if a marker is missing: a silent no-op would ship the code. */
 export function pruneSubtle(prelude: string): string {
   let out = prelude;
   for (const [begin, end] of SUBTLE_BLOCKS) {
@@ -298,16 +237,9 @@ export function wrapNativeFetchHandler(
   port: number = DEFAULT_PORT,
   compatibilityDate: string = BASELINE_COMPATIBILITY_DATE,
   appName: string = "app",
-  /** #15 — assets baked into the module for a binary that has no files beside it. */
   assets?: { manifest: unknown; files: Record<string, string> },
-  /** The selected transport determines whether the direct-transfer C ABI is real or stubbed. */
   transport: Transport = "broker",
-  /**
-   * #126 — `env.<binding> = { id, tag, timestamp }`. Baked at build time from the
-   * artifact digest, like `vars`: the control plane's own deployment id is a
-   * separate, later-assigned thing (minted at upload), so this is the artifact's
-   * own self-describing identity rather than a broker round trip.
-   */
+  /** #126 - `env.<binding> = { id, tag, timestamp }`, baked from the artifact digest (the control plane's deployment id is minted later, at upload). */
   versionMetadata?: { binding: string; id: string; tag: string; timestamp: string },
   subtle?: SubtleMode,
 ): string {
@@ -321,8 +253,7 @@ export function wrapNativeFetchHandler(
   )
     prelude = pruneSubtle(prelude);
   const neutralised = neutraliseExports(inlineWorkersImports(source));
-  // A WorkerEntrypoint may serve only RPC, and a Worker only scheduled() or queue(), with
-  // no fetch() at all, as in workerd.
+  // A WorkerEntrypoint may serve only RPC, and a Worker only scheduled() or queue(), as in workerd.
   if (neutralised === null || !hasEntryHandler(source)) {
     throw new Error(
       "handler must default-export an object with a fetch(request), scheduled() or queue() method, or a WorkerEntrypoint class",
@@ -337,44 +268,33 @@ export function wrapNativeFetchHandler(
         timestamp: versionMetadata.timestamp,
       })};\n`
     : "";
-  // Baked, not a binding: the date belongs to the artifact, and a handler must
-  // not be able to change the semantics it was compiled against at runtime.
+  // Baked, not a binding: a handler must not be able to change the semantics it was compiled against.
   const compat =
     `globalThis.__sbCompat = ${JSON.stringify(compatibilityDate)};\n` +
     `__sbSetCompat(${JSON.stringify(compatibilityDate)});\n` +
-    // #15 — the embedded transport derives its default data directory from this.
     `globalThis.__sbAppName = ${JSON.stringify(appName)};\n` +
     (assets ? `globalThis.__sbAssets = ${JSON.stringify(assets)};\n` : "");
-  // The native transfer hook runs before JavaScript receives its Request. It
-  // has a real file-backed implementation only in embedded builds. The broker
-  // transport supplies ABI-compatible stubs because its separate transfer
-  // listener owns these URLs, while the shared uWebSockets patch is global.
+  // The native transfer hook runs before JavaScript receives its Request. Only embedded builds implement it; the broker
+  // transport supplies ABI-compatible stubs because its own listener owns these URLs and the uWebSockets patch is global.
   const nativeTransferAbi =
     transport === "embedded"
       ? `Porffor.c\`const char* sb_standalone_app_name(void) { return ${JSON.stringify(appName)}; }\`;\n`
       : 'Porffor.c`typedef struct sb_r2_transfer_ctx { int unused; } sb_r2_transfer_ctx; int sb_r2_transfer_open(const char* a, const char* b, size_t c, sb_r2_transfer_ctx** d) { if (d) *d = 0; return 404; } int sb_r2_transfer_write(sb_r2_transfer_ctx* a, const char* b, size_t c) { return 404; } int sb_r2_transfer_finish(sb_r2_transfer_ctx* a) { return 404; } void sb_r2_transfer_abort(sb_r2_transfer_ctx* a) {} int sb_r2_transfer_download_open(const char* a, const char* b, sb_r2_transfer_ctx** c) { if (c) *c = 0; return 404; } size_t sb_r2_transfer_download_size(sb_r2_transfer_ctx* a) { return 0; } const char* sb_r2_transfer_download_etag(sb_r2_transfer_ctx* a) { return ""; } size_t sb_r2_transfer_download_read(sb_r2_transfer_ctx* a, size_t b, char* c, size_t d) { return 0; } void sb_r2_transfer_download_close(sb_r2_transfer_ctx* a) {}`;\n';
-  // #174 — fetch() needs no binding: every sprout gets it.
   const wire =
     "__sbInstallFetch();\n" + (hasBindings(bindings) ? `__sbInstallBindings(env, ${JSON.stringify(bindings)});\n` : "");
   const registerDO = bindings.do.length
     ? `__sbRegisterDO({ ${bindings.do.map((d) => `${d.className}: ${d.className}`).join(", ")} });\n`
     : "";
-  // Cron / queue / alarm timers, for a transport that has no broker to deliver
-  // them. The broker transport defines this as a no-op, so the emitted module
-  // is the same either way.
-  // A Worker with crons and no other binding needs them too (B22): its crons never ran.
+  // Cron / queue / alarm timers for a transport with no broker; the broker transport defines this as a no-op so the
+  // emitted module is the same either way. A Worker with only crons needs them too (B22).
   const triggers =
     hasBindings(bindings) || bindings.crons.length > 0
       ? `__sbStartLocalTriggers(__sbHandlers, ${JSON.stringify(bindings)});\n`
       : "";
 
-  // baronunread/sproutboat#238: the handler runs in its own function scope.
-  // Spliced in at the prelude's top level, a bundle's own top-level
-  // `const URL = ...` (uuid exports one) replaced the URL class for the whole
-  // module, prelude included, and the binary died at startup. Porffor resolves
-  // a top-level name module-wide, so a block is not enough; a function is.
-  // Static imports (a direct-ESM handler, no bundler in front) are only legal
-  // at module top level, so they stay outside the function.
+  // baronunread/sproutboat#238: the handler runs in its own function scope. Spliced at the prelude's top level, a
+  // bundle's own `const URL = ...` (uuid exports one) replaced the URL class module-wide and the binary died at
+  // startup; Porffor resolves top-level names module-wide, so a block is not enough. Static imports stay outside.
   const importPattern = /^import\s(?:[\s\S]*?\sfrom\s*)?["'][^"'\n]+["'];?[ \t]*$/gm;
   const imports = (neutralised.match(importPattern) ?? []).join("\n");
   const body = inlineImportMeta(neutralised.replace(importPattern, ""));
@@ -394,7 +314,6 @@ function isVarsString(value: VarsJson): value is string {
   return Object(value) !== value && value === String(value);
 }
 
-/** `SPROUTBOAT_VARS_JSON` (set by the build) → a validated flat string map. */
 export function readVarsFromEnv(): Record<string, string> {
   const raw = process.env.SPROUTBOAT_VARS_JSON;
   if (!raw) return {};
@@ -409,12 +328,7 @@ export function readVarsFromEnv(): Record<string, string> {
   );
 }
 
-/**
- * `SPROUTBOAT_BINDINGS_JSON` (the artifact's `bindings.json`, passed by the
- * build) → a `Bindings` shape. Every field is re-validated here; unknown keys
- * are dropped and a missing / empty payload is `EMPTY_BINDINGS`, so an old build
- * with no bindings still compiles.
- */
+/** `SPROUTBOAT_BINDINGS_JSON` → `Bindings`, every field re-validated; a missing payload is `EMPTY_BINDINGS`, so old builds still compile. */
 export function readBindingsFromEnv(): Bindings {
   const raw = process.env.SPROUTBOAT_BINDINGS_JSON;
   if (!raw) return EMPTY_BINDINGS;

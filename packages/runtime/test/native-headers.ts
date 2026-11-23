@@ -5,10 +5,8 @@ import { join } from "node:path";
 import { compileNative } from "./native-compile";
 import { preludePath, TRANSPORT_MARKER, transportPath, wrapNativeFetchHandler } from "../src/wrap";
 
-// Headers validates a name and trims a value in C before it falls back to the regular expression and
-// the JS loops. Every kind of name and value must come out as the Fetch spec says: valid names
-// lowercased, invalid ones a TypeError, values trimmed, forbidden characters refused, and a name
-// that is not a plain bytestring (a wide character) still judged by the expression.
+// Headers validates a name and trims a value in C before falling back to the regular expression and JS loops: every name and value must come out as the
+// Fetch spec says, and a name that is not a plain bytestring (a wide character) is still judged by the expression.
 const handler = `export default {fetch(request) {
   const out = {};
   const names = ["a", "Content-Type", "X-Sb-Test", "x_y", "a.b", "a~b", "a|b", "a^b", "a+b", "a*b", "a!b", "a#b", "a$b", "a%b", "a&b", "a'b", "a-b", "9", "A9z", "",

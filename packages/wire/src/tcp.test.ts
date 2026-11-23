@@ -342,8 +342,6 @@ test("an old-style frame on the same listener still works next to tunnels", asyn
   expect(reply.ok).toBe(true);
 });
 
-// --- TLS --------------------------------------------------------------------
-
 let cert = "";
 let key = "";
 let dir = "";
@@ -527,8 +525,6 @@ test("startTls is refused when the socket was not opened with starttls", async (
   expect(frame.payload.toString()).toContain("startTls");
 });
 
-// --- backpressure -----------------------------------------------------------
-
 test("backpressure toward the sprout: an origin that floods a sprout that is not reading is held back", async () => {
   let written = 0;
   let blocked = false;
@@ -649,8 +645,6 @@ test("closing the sprout's connection while data is queued tears the origin down
   expect(broker.tcp.open()).toBe(0);
 });
 
-// --- the egress service -----------------------------------------------------
-
 test("egress service: the broker relays tunnels to it and the service does the vetting", async () => {
   const echo = origin();
   const service = listenTunnelService(
@@ -714,8 +708,6 @@ test("egress service: a broker with the wrong token gets an error frame, and an 
   await b.ack();
   expect((await b.next()).type).toBe(TCP_ERROR);
 });
-
-// --- unauthenticated input on the egress service ----------------------------
 
 /** A raw client: writes `bytes`, returns everything the service sent until it closed (or `ms` passed). */
 async function rawExchange(port: number, bytes: Uint8Array[], ms = 3000) {

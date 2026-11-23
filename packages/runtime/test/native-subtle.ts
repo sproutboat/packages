@@ -7,11 +7,8 @@ import { jsonObject, parseJsonValue, type JsonObject, type JsonValue } from "../
 import { SUBTLE_DATE } from "../src/subtle-date";
 import { preludePath, TRANSPORT_MARKER, transportPath, wrapNativeFetchHandler } from "../src/wrap";
 
-// The date gate and the parts of crypto.subtle that need no native half (the broker transport has
-// none): HMAC, digest, JWK for symmetric keys, and every error's DOMException name, against what
-// workerd answers for the same calls. The RSA/ECDSA/Ed25519/AES paths run in the embedded
-// transport and are covered by src/subtle/subtle.test.ts (C against BoringSSL) and the
-// conformance run in the PR description.
+// The date gate and the parts of crypto.subtle that need no native half (HMAC, digest, symmetric JWK, every error's DOMException name), against workerd.
+// RSA/ECDSA/Ed25519/AES run in the embedded transport: src/subtle/subtle.test.ts.
 const handler = `
 const hex = (b) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, "0")).join("");
 async function t(f) {

@@ -6,14 +6,8 @@ import { compileNative } from "./native-compile";
 import { createBroker, listen } from "../../wire/src/broker";
 import { EMPTY_BINDINGS, preludePath, TRANSPORT_MARKER, transportPath, wrapNativeFetchHandler } from "../src/wrap";
 
-// Service bindings on a standalone sprout. env.PEER.fetch() returns a promise and runs
-// off the event loop (the broker transport's async threads), so the sprout keeps
-// serving while a call is in flight: other requests answer at once, concurrent calls
-// overlap, and a deployment that calls itself through a binding does not deadlock.
-// Requests read like Fetch's: a URL object, a Request plus init, a stream body; every
-// Set-Cookie of the reply survives, and a reply without a content type keeps none.
-// From compatibility date 2026-10-22, redirects are followed as Fetch does. A stand-in
-// edge plays the platform's.
+// Service bindings on a standalone sprout: env.PEER.fetch() runs off the event loop, so the sprout keeps serving during a call, concurrent calls
+// overlap and a self-call does not deadlock. Requests read like Fetch's; from compat 2026-10-22 redirects are followed. A stand-in edge plays the platform's.
 const handler = `
 import { WorkerEntrypoint } from "cloudflare:workers";
 

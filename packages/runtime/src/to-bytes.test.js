@@ -1,8 +1,5 @@
-// sproutboat #180 — __sbToBytes lives inline in native-fetch-prelude.js (the
-// prelude is prepended as text and cannot import), so this test lifts that one
-// pure-JS function (plus its __sbIsStr dependency) out and exercises it
-// directly. If it moves or its boundary markers change, this fails loudly
-// rather than silently testing nothing.
+// sproutboat #180 - the prelude is prepended as text and cannot import, so this lifts __sbToBytes (and __sbIsStr) out and runs it;
+// if its boundary markers change this fails loudly instead of testing nothing.
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -73,12 +70,8 @@ test("ArrayBuffer / typed-array input is copied byte for byte, high bytes includ
   expect(bytesOf(__sbToBytes(bytes.buffer))).toEqual([...bytes]);
 });
 
-// __sbToBytes builds its result via an array + one join(), not repeated
-// `out +=` / `s +=`. Porffor's strings have no rope/cons optimization, so `+=`
-// in a loop copies the whole accumulated string on every append, making a
-// large encode O(n^2) -- the same bug class __sbFromUtf8 was fixed for
-// (see utf8-decode.test.js). This is a correctness check (long input still
-// round-trips exactly), not a timing assertion.
+// __sbToBytes builds its result via an array + one join(): Porffor strings have no rope optimization, so `+=` in a loop is O(n^2) (the
+// bug class __sbFromUtf8 was fixed for). A correctness check (long input round-trips), not a timing assertion.
 test("a long, multi-chunk mixed-width string round-trips byte-identically", () => {
   const chunk = "porffor · src/index.js → 1.25 MB · x86_64-musl ✓ café 🌱 ";
   const text = chunk.repeat(800); // ~46KB, comparable to the __sbFromUtf8 regression case
@@ -91,12 +84,8 @@ test("a long high-byte typed array round-trips byte for byte", () => {
   expect(bytesOf(__sbToBytes(bytes))).toEqual([...bytes]);
 });
 
-// sproutboat#181: 0.6.4 encoded every size through one array-push-then-join
-// path, which cost a real app 64% of its throughput on the ~150-byte inputs
-// crypto.subtle sees per request. The encoder now only reaches for an array
-// once a 512-byte window fills, so these sizes exercise both sides of that
-// boundary and the seam between them. Correctness only; the performance claim
-// lives in the benchmark, not here.
+// sproutboat#181: encoding every size through array-push-then-join cost a real app 64% of its throughput on ~150-byte inputs, so the encoder
+// reaches for an array only once a 512-byte window fills. These sizes cover both sides of that boundary. Correctness only.
 test("inputs either side of the window boundary encode byte-identically", () => {
   for (const n of [0, 1, 150, 511, 512, 513, 1024, 1025]) {
     const text = "a".repeat(n);

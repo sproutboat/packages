@@ -1,7 +1,5 @@
-// The app under test in native-concurrent-requests.ts: every route keeps its own request's
-// values in locals, awaits on timers, fetch(), body streams, KV, D1 and WebSockets, and
-// reports what it saw before and after each await. A reply that holds another request's id
-// is a leak between interleaved requests. Written to the subset every host compiles.
+// The app under test in native-concurrent-requests.ts: every route keeps its request's values in locals, awaits on timers, fetch(), streams, KV, D1 and WebSockets,
+// and reports what it saw around each await; a reply holding another request's id is a leak. Written to the subset every host compiles.
 const seenCf = [];
 const seenHeaders = [];
 const seenCtx = [];

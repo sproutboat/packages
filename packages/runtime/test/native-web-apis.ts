@@ -5,10 +5,8 @@ import { join } from "node:path";
 import { compileNative } from "./native-compile";
 import { preludePath, TRANSPORT_MARKER, transportPath, wrapNativeFetchHandler } from "../src/wrap";
 
-// Web API behaviour the W2 conformance suite found wrong, compared with Bun: Headers
-// (combined get, sorted iteration, getSetCookie, trimming, validation), TextDecoder (astral,
-// replacement, fatal, BOM, stream), URLSearchParams init forms, atob/btoa checks, Unicode
-// case mapping, queueMicrotask and IDN hosts.
+// Web API behaviour the W2 conformance suite found wrong, compared with Bun: Headers, TextDecoder, URLSearchParams init forms,
+// atob/btoa, Unicode case mapping, queueMicrotask and IDN hosts.
 const CASES = [
   `(() => { const h = new Headers(); h.append("B", " 2 "); h.append("a", "1"); h.append("a", "x"); return [h.get("a"), [...h].map((p) => p.join("=")).join(";")].join("|"); })()`,
   `(() => { const h = new Headers(); h.append("set-cookie", "a=1"); h.append("set-cookie", "b=2"); return [h.getSetCookie().join("+"), [...h].length].join("|"); })()`,

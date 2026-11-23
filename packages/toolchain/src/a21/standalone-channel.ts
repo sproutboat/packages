@@ -1,12 +1,8 @@
 import { CURRENT_ALPHA, type PorfforA21Channel } from "./pin";
 
 /**
- * Which Porffor channel a standalone build uses. The toolchain supports one alpha at a time:
- * `CURRENT_ALPHA` (alpha 25), composed in sproutd's worker shape and served by the vendored uWebSockets shim over
- * the flat native-fetch bridge. `SPROUTBOAT_PORFFOR_CHANNEL` may name it; alpha 19 (which the CLI's removed
- * `--with-restore` build used), 21, 22, 23 and 24 are no longer supported: the variable names them in an error
- * instead of building something else under their name. The CLI, the runtime's native tests and
- * `scripts/test-native.ts` all resolve the channel here, so they cannot disagree about the default.
+ * Which Porffor channel a standalone build uses: `CURRENT_ALPHA` (alpha 25). `SPROUTBOAT_PORFFOR_CHANNEL` may name it; older alphas are refused with an error
+ * rather than built under their name. The CLI, the native tests and `scripts/test-native.ts` all resolve it here so they cannot disagree.
  */
 export type StandaloneChannel = PorfforA21Channel;
 

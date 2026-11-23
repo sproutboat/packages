@@ -18,10 +18,8 @@ const params = (v: JsonValue | undefined): SqlParam[] =>
   Array.isArray(v)
     ? v.map((p) => (p === null || isNumber(p) || isString(p) ? p : isBoolean(p) ? Number(p) : (blobOf(p) ?? String(p))))
     : [];
-// A BLOB read back: hex for strict calls (the shim makes it an array of byte values, as
-// workerd does), one char per byte otherwise (what the embedded transport returns).
-// SAFETY: bun:sqlite returns only null, numbers, strings, bigints (off by default) and
-// Uint8Array for BLOBs; the Uint8Array case is converted here, the rest are JSON values.
+// A BLOB read back: hex for strict calls (the shim makes it an array of byte values, as workerd does), one char per byte otherwise.
+// SAFETY: bun:sqlite returns only null, numbers, strings, bigints (off by default) and Uint8Array for BLOBs; the Uint8Array case is converted here.
 type SqliteValue = JsonValue | Uint8Array | bigint;
 // SAFETY: the two non-JSON cases (bytes, bigint) are converted first; what is left is a JSON value.
 const cell = (v: SqliteValue, strict: boolean): JsonValue =>
@@ -77,10 +75,8 @@ export function d1Error(error: Error, byteOffset?: number): Error {
   return new Error(text);
 }
 /**
- * Where, in a line of statements, the statement that fails at byte `offset` begins. bun:sqlite counts an
- * error's offset from the start of the whole string; D1 (SQLite's own exec loop) counts it from the first
- * non-space character of the failing statement. A `;` inside a quoted name or string or a comment does not
- * end a statement.
+ * Where the statement failing at byte `offset` begins: bun:sqlite counts an error's offset from the start of the whole string, D1 from the first
+ * non-space character of the failing statement. A `;` inside a quoted name, string or comment does not end a statement.
  */
 export function statementStart(sql: Uint8Array, offset: number): number {
   const at = (i: number) => (i < sql.length ? sql[i] : 0);
@@ -197,11 +193,8 @@ function placeholders(sql: string): Placeholder[] {
 const REAL_PREFIX = "CAST(";
 const REAL_SUFFIX = " AS REAL)";
 /**
- * workerd binds every JS number (and boolean) as a REAL; bun:sqlite binds a whole number as an INTEGER, and
- * has no way to say otherwise. Wrap the placeholders that take one: `CAST(?1 AS REAL)` is the same value as
- * the REAL SQLite would have been given, keeps an index lookup (`WHERE id = CAST(? AS REAL)` still searches
- * the rowid) and reads `typeof(?)` as real, `7 / 2` as 3.5, and a number stored in a TEXT column as "7.0".
- * `wraps` are the start offsets of the wrapped placeholders in the new text, to put an error offset back.
+ * workerd binds every JS number as a REAL, bun:sqlite binds a whole number as an INTEGER. `CAST(?1 AS REAL)` gives the same value, keeps index lookups
+ * and reads `typeof(?)` as real and `7 / 2` as 3.5. `wraps` are the offsets of the wrapped placeholders, to put an error offset back.
  */
 export function bindReal(sql: string, values: SqlParam[]): { sql: string; wraps: number[] } | undefined {
   let out: string | undefined;

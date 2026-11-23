@@ -1,7 +1,5 @@
-// R2 get() reads an object as asked (sproutd #99): a range reads only its window, a body streams one chunk at
-// a time, and nothing reads the whole object unless text(), json(), arrayBuffer() or blob() ask for all of it.
-// The prelude is text, so this lifts the strict R2 object block out and runs it against a fake file whose reads
-// are recorded, as r2-object.test.js does for the legacy object.
+// R2 get() reads as asked (sproutd #99): a range reads only its window, a body streams a chunk at a time, nothing reads the whole object unless
+// text(), json(), arrayBuffer() or blob() asks. Lifts the strict R2 object block out of the prelude and runs it against a fake file.
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

@@ -107,10 +107,8 @@ export async function renderStandaloneUnits(input: RenderUnitsInput): Promise<st
   await rm(work, { recursive: true, force: true });
   await mkdir(work, { recursive: true });
   const composed = composeStandaloneA21(await readFile(input.generated, "utf8"));
-  // Beside the generated module: its relative imports (a handler's sibling helper files) resolve from the
-  // directory of the file they were written in, and the shared prelude carries the module's body. The
-  // chain recognises the prelude by its file name, so a test that compiles several variants from one
-  // directory at once (native-websockets) takes turns: the render is the only step that reads it.
+  // Beside the generated module: relative imports resolve from the file's directory. The chain recognises the shared prelude by file name, so tests compiling several
+  // variants from one directory at once (native-websockets) take turns: only the render reads it.
   const source = dirname(resolve(input.generated));
   const entry = join(source, "entry.a22.js");
   const turn = renderQueue;

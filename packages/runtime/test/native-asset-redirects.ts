@@ -7,11 +7,8 @@ import { compileNative } from "./native-compile";
 import { preludePath, TRANSPORT_MARKER, transportPath, wrapNativeFetchHandler } from "../src/wrap";
 import { REDIRECT_CASES } from "./fixtures/asset-redirect-cases";
 
-// The `_redirects` matcher the compiled prelude runs (`__sbFindAssetRedirect`, used by env.ASSETS.fetch and the
-// embedded transport's assets.get) against the cases the portable matcher in @sproutboat/assets is held to
-// (packages/runtime/src/asset-rules.test.js reads the same file): Cloudflare's rules, so a trailing slash is
-// significant and `/compare /compare/ 308` is one hop. The handler reaches the prelude's function from inside the
-// module, so what runs is the Porffor-compiled code, not Bun's reading of it.
+// The `_redirects` matcher the compiled prelude runs (`__sbFindAssetRedirect`) against the cases the portable matcher in @sproutboat/assets is
+// held to: Cloudflare's rules, so a trailing slash is significant. The handler calls it inside the module, so Porffor-compiled code is what runs.
 const handler = `export default {
   async fetch(request) {
     const { rules, path } = await request.json();

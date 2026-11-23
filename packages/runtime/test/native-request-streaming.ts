@@ -5,10 +5,8 @@ import { join } from "node:path";
 import { compileNative } from "./native-compile";
 import { preludePath, TRANSPORT_MARKER, transportPath, wrapNativeFetchHandler } from "../src/wrap";
 
-// Streamed request bodies, from compatibility date 2026-10-27: the handler runs once the
-// headers are in, request.body hands out chunks as they arrive, text()/json()/arrayBuffer()
-// still read the whole body, and a large upload read through the stream keeps memory flat
-// (the server pauses the socket while 1 MiB waits unread).
+// Streamed request bodies from compat 2026-10-27: the handler runs once headers are in, request.body hands out chunks as they arrive, text()/json()/arrayBuffer()
+// still read it all, and a large upload read through the stream keeps memory flat (the server pauses the socket while 1 MiB waits unread).
 const handler = `export default {async fetch(request) {
   const path = new URL(request.url).pathname;
   if (path === "/timing") {

@@ -5,12 +5,9 @@ import { join } from "node:path";
 import { compileNative } from "./native-compile";
 import { preludePath, TRANSPORT_MARKER, transportPath, wrapNativeFetchHandler } from "../src/wrap";
 
-// A standalone server built the way the CLI's host and release builds are: `-flto -O3`. Every other native test
-// compiles without LTO, and that hid a bug on Porffor alpha 23 for macOS arm64: the bridge called the generated
-// main (`p__main__23main`) as a plain C function while the definition is swiftcall, which is harmless across
-// object files and, once LTO sees both, becomes `unreachable`. The binary died with SIGTRAP before it listened.
-// The server must start and answer through every way the host C enters generated code: startup, a request,
-// a timer, a settled promise.
+// A standalone server built as the CLI's host and release builds are (`-flto -O3`). Other native tests skip LTO, which hid an alpha 23 macOS arm64 bug: the
+// bridge called the swiftcall generated main as plain C, harmless across object files, `unreachable` once LTO saw both (SIGTRAP before listening).
+// The server must start and answer through every way host C enters generated code: startup, a request, a timer, a settled promise.
 const handler = `export default {async fetch(request) {
   const url = new URL(request.url);
   if (url.pathname === "/timer") { await new Promise((done) => setTimeout(done, 20)); return new Response("timer ok"); }

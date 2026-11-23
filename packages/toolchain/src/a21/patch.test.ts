@@ -20,12 +20,9 @@ import { extractPatchedTree } from "./patched-tree";
 import { CURRENT_ALPHA, PORFFOR_A21_PINS } from "./pin";
 
 /**
- * What these tests cover: the patch SERIES (`porffor-patches/`, applied to upstream by
- * `scripts/porffor-patches.ts`) and the PATCHED TREE it makes (the vendored tarball the toolchain ships).
- * The first block is cheap and runs everywhere: the committed series, manifest, tarball and PATCHES.md
- * agree. The second reads the shipped tree for what each patch is meant to do and compiles programs with it.
- * Reproducing the tarball from upstream (apply + export + vendor, byte for byte) needs git and the upstream
- * commit: CI runs `bun scripts/porffor-patches.ts verify`, and PORFFOR_SERIES_VERIFY=1 runs it here.
+ * Covers the patch SERIES (`porffor-patches/`) and the PATCHED TREE it makes (the vendored tarball): the first block checks that the committed
+ * series, manifest, tarball and PATCHES.md agree, the second compiles programs with the shipped tree. Reproducing the tarball from upstream
+ * needs git: CI runs `bun scripts/porffor-patches.ts verify`, PORFFOR_SERIES_VERIFY=1 runs it here.
  */
 
 const temporary: string[] = [];
@@ -39,8 +36,6 @@ async function patched(): Promise<string> {
   temporary.push(root);
   return root;
 }
-
-// --- the series, the manifest and the tarball agree ---
 
 test("the committed series, manifest and tarball agree (no git, no network)", () => {
   expect(check()).toEqual([]);
@@ -93,8 +88,6 @@ test("the series reproduces from upstream byte for byte (PORFFOR_SERIES_VERIFY=1
   if (!process.env.PORFFOR_SERIES_VERIFY) return;
   expect(verify(process.env.PORFFOR_UPSTREAM, () => {})).toEqual([]);
 }, 300_000);
-
-// --- the shipped tree ---
 
 test("acquire unpacks the vendored tarball once, verified, and republishes a damaged cache entry", async () => {
   const cacheRoot = await mkdtemp(join(tmpdir(), "sb-a21-acquire-"));

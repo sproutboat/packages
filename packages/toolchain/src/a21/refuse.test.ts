@@ -5,14 +5,9 @@ import { extractPatchedTree } from "./patched-tree";
 import { INTRINSIC_REFUSAL } from "./pin";
 
 /**
- * Raw C and the compiler's intrinsics must not be reachable from compiled app code. The compile shape is sproutd's:
- * an entry (the generation's own app.js) imports the app's worker.js, and the shared prelude (the platform's, with its
- * own Porffor.c) sits beside them. The hostile corpus below is every way found to name an intrinsic; each must fail
- * with SB_INPUT_REFUSED, never produce C.
- *
- * What is NOT refused, and why it is fine: a name built at run time (`globalThis["Porf" + "for"]`, `globalThis[k]`)
- * is a property read on the global object, which holds no intrinsic (checked: `undefined`), and `Porffor.c` needs a
- * template tag it can resolve while compiling. Those cases must compile and must not put hostile text into the C.
+ * Raw C and the compiler's intrinsics must not be reachable from compiled app code (sproutd's shape: entry, worker.js, shared prelude). Every way found to name
+ * an intrinsic must fail with SB_INPUT_REFUSED. Not refused, and fine: a name built at run time (`globalThis["Porf" + "for"]`) reads a global that holds
+ * no intrinsic, and `Porffor.c` needs a template tag resolvable at compile time; those must compile and put no hostile text into the C.
  */
 
 const temporary: string[] = [];

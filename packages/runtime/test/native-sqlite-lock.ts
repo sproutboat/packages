@@ -4,10 +4,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// A standalone binary (the embedded transport, built by the CLI) opens its SQLite databases in
-// EXCLUSIVE locking mode by default; SB_SQLITE_EXCLUSIVE=0 opts out and =1 is the default. The
-// transport on its own, as sproutd and the broker embed it, stays shared unless the variable is
-// set: native-d1.ts covers that. Needs SB_CLI, a sproutboat-cli checkout linked to this one.
+// A standalone binary opens SQLite in EXCLUSIVE locking mode by default (SB_SQLITE_EXCLUSIVE=0 opts out); the bare transport as sproutd and
+// the broker embed it stays shared (native-d1.ts). Needs SB_CLI, a sproutboat-cli checkout linked to this one.
 const handler = `export default {
   async fetch() {
     await env.DB.prepare("CREATE TABLE IF NOT EXISTS t (v INTEGER)").run();

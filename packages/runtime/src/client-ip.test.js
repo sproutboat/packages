@@ -1,7 +1,5 @@
-// #163 — the client-IP resolution helpers live inline in native-fetch-prelude.js
-// (the prelude is prepended as text and cannot import), so this test lifts that
-// one pure-JS block out and exercises it directly. If the block moves or its
-// boundary markers change, this fails loudly rather than silently testing nothing.
+// #163 - the prelude is prepended as text and cannot import, so this lifts the client-IP block out and runs it; if its markers change
+// this fails loudly instead of testing nothing.
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

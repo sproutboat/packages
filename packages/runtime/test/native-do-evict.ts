@@ -3,10 +3,8 @@ import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// Durable Object eviction (plan 018, compatibility date 2026-11-21) on a standalone binary: an idle object leaves memory after
-// SB_DO_IDLE_MS and its next event constructs it again; the cap, the overloaded error, alarms into evicted objects, pins, the
-// reset on a failed blockConcurrencyWhile and the revoked zombie. These are the first copy of the conformance cases of
-// sproutd's conformance/bindings/do.js (plan 018 phase 4). Needs SB_CLI, a sproutboat-cli checkout linked to this one.
+// Durable Object eviction (plan 018, compat 2026-11-21) on a standalone binary: idle eviction after SB_DO_IDLE_MS, the cap, alarms into
+// evicted objects, pins, blockConcurrencyWhile reset and the revoked zombie. Needs SB_CLI, a sproutboat-cli checkout linked to this one.
 const cli = process.env.SB_CLI;
 if (!cli) {
   console.log("skipped: set SB_CLI to a sproutboat-cli checkout linked to this checkout (it builds the sprout)");

@@ -6,10 +6,8 @@ import { compileNative } from "./native-compile";
 import { createBroker, listen } from "../../wire/src/broker";
 import { EMPTY_BINDINGS, preludePath, TRANSPORT_MARKER, transportPath, wrapNativeFetchHandler } from "../src/wrap";
 
-// baronunread/sproutboat#189: text read back through the broker came back as
-// Latin-1 mojibake ("café" as "cafÃ©"), because the reply JSON is UTF-8 and the
-// sprout holds it one char per byte. Covers 2-, 3- and 4-byte sequences on the
-// two hot paths (KV, D1) and a non-ASCII SQLite error message.
+// baronunread/sproutboat#189: text read back through the broker came back as Latin-1 mojibake ("café" as "cafÃ©"): the reply JSON is UTF-8 and the
+// sprout holds it one char per byte. Covers 2-, 3- and 4-byte sequences on KV and D1 and a non-ASCII SQLite error message.
 const text = "/café/日本/😀/x";
 
 // #238: the handler's own top-level \`URL\` (uuid exports one) must not replace

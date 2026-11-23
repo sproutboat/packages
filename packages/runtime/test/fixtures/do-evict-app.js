@@ -1,7 +1,5 @@
-// Durable Object eviction fixture (plan 018): objects that count what survives an eviction. Every handler is a path:
-//   /via/ID/OP?...   a stub.fetch to object ID of class Obj (or Slow, Flaky) running OP; errors come back as JSON with `overloaded`
-//   /release/N       resolves the zombie promise N
-//   /zombie-result/N what the zombie got when it tried to write after its object was evicted
+// Durable Object eviction fixture (plan 018): objects that count what survives an eviction. Handlers are paths: /via/ID/OP (stub.fetch to Obj, Slow or Flaky),
+// /release/N (resolves zombie N), /zombie-result/N (what the zombie got when it wrote after eviction).
 const json = (v, status = 200) =>
   new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json" } });
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));

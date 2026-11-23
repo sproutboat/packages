@@ -158,8 +158,6 @@ test("before 2026-10-31 without settings, the outcome has only ack and retry", a
   expect(out).toEqual({ ack: [], retry: ["a"] });
 });
 
-// ---- 2026-11-05 ----
-
 const failure = (p) =>
   p.then(
     () => "accepted",
