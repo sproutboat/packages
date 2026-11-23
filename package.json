@@ -47,6 +47,7 @@
     "test:native-textdecoder-encodings": "bun packages/runtime/test/native-textdecoder-encodings.ts",
     "test:native-getrandomvalues": "bun packages/runtime/test/native-getrandomvalues.ts",
     "test:native-request": "bun packages/runtime/test/native-request.ts",
+    "test:native-broker-gate": "bun packages/runtime/test/native-broker-gate.ts",
     "test:native-waituntil": "bun packages/runtime/test/native-waituntil.ts",
     "test:native-web-apis": "bun packages/runtime/test/native-web-apis.ts",
     "test:native-bodies": "bun packages/runtime/test/native-bodies.ts",
