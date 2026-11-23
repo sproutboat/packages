@@ -1,5 +1,12 @@
 # @sproutboat/toolchain
 
+## 0.29.1
+
+### Patch Changes
+
+- a332a7b: Porffor patch P15: a strict block moves each function declaration up to just before its first use in one pass, and a function moved up could mention a function declared later that the pass had already left alone. The callee then sat behind its caller, was not declared when the caller generated its nested closures, was never compiled, and the call threw a TypeError with no message (or aborted with "bad function index"). An Alchemy v2 Worker bundle has this shape, so every request of a compiled Alchemy Worker answered 500. The pass now repeats until the order settles, each function moving at most once. The fix changes the compiler's output for programs with that shape (they used to crash), so a new Cloud generation needs the porffor tier of requalification. No compatibility date: the old behaviour was a crash.
+- a332a7b: The compiler's refusal of its own intrinsics (series patch 0026) no longer refuses Rolldown's CommonJS interop helpers `__toESMCache_node` and `__toESMCache_esm`. They look like an intrinsic (`__Name_x`) and are not one; every Rolldown bundle that imports a CommonJS package carries them (an Alchemy Worker's does), so with the refusal as first written no such app compiled on a toolchain that had it. The first segment is compared whole, so `__toESMCache_x` passes and `__Array_x` still does not; the exhaustive test over every builtin dunder name is unchanged.
+
 ## 0.29.0
 
 ### Minor Changes
