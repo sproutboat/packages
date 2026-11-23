@@ -1324,6 +1324,17 @@ function __sbCall(reqJson) {
  */
 globalThis.__sbStartLocalTriggers = function () {};
 
+/**
+ * The acknowledgement gate (design 029 S3) has nothing to gate here: its state is the embedded
+ * transport's commit counter (sb_gate_op, C), and a broker-backed sprout (`sproutboat dev`, a
+ * deployed sprout) captures no commits in-process. The prelude asks for it unconditionally from
+ * compatibility date 2026-11-20, so this answers "0" to every question: "e" (enable) says the
+ * gate is off, "b" says nothing is unconfirmed, and the counters read 0.
+ */
+function __sbGateRaw() {
+  return "0";
+}
+
 /** B22: only a host-driven embedded worker (sproutd) has local triggers to run. */
 globalThis.__sbRunLocalDue = function () {
   return new Response("no local triggers", { status: 404 });
