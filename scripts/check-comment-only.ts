@@ -1,4 +1,4 @@
-// Proves a comment-only change: transpile each changed file at BASE and in the working tree
+// Checks a comment-only change (types are erased, so typecheck too): transpile each changed file at BASE and in the working tree
 // (Bun.Transpiler, whitespace minified) and require byte-identical output.
 //   bun scripts/check-comment-only.ts [base-ref=origin/main]
 const base = process.argv[2] ?? "origin/main";
