@@ -1,8 +1,6 @@
 /**
- * A small unified-diff applier for the vendored uWebSockets patches (`uws-patches/`): exact context,
- * no fuzz, no git or `patch` binary (the CLI applies them on machines that have neither). A hunk whose
- * result is already in the file counts as applied, so applying twice is a no-op; a hunk that matches
- * neither way throws, loudly, naming the file.
+ * A unified-diff applier for the vendored uWebSockets patches: exact context, no fuzz, no git or `patch` binary (the CLI applies
+ * them on machines with neither). A hunk already applied is skipped; one that matches neither way throws, naming the file.
  */
 
 export type FilePatch = { path: string; hunks: { oldLines: string[]; newLines: string[] }[] };

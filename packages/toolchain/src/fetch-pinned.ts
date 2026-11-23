@@ -29,11 +29,8 @@ const sha256Hex = (bytes: Uint8Array): string => createHash("sha256").update(byt
 class Permanent extends Error {}
 
 /**
- * Return a build-time dependency's bytes, only if they hash to the pinned sha256: first the vendored
- * file (`localPath`), then the ordered download list. The pin is what makes every source safe: one
- * that has different bytes (a tampered vendored file included) is skipped, so the list can only
- * improve availability, never change what gets built. A 5xx or a network error is retried with exponential backoff (bounded); a 4xx or a
- * hash mismatch moves straight on to the next source.
+ * A build-time dependency's bytes, only if they hash to the pinned sha256: the vendored file first, then the download list. A source with other bytes
+ * (a tampered vendored file included) is skipped, so the list only improves availability. 5xx and network errors retry with backoff; 4xx and mismatches move on.
  */
 export async function fetchPinned(options: FetchPinnedOptions): Promise<Buffer> {
   const sha256 = options.sha256.toLowerCase();

@@ -1,10 +1,4 @@
-/**
- * The standalone server's own sources, vendored as first-class files (`sources.json` is the
- * provenance): the uWebSockets server shim, the web classes, and the three patches the uWebSockets
- * checkout is compiled with. Until 2026-11-15 the standalone build on alpha 24 took all of them from
- * a patched Porffor alpha 19 tree it acquired just for that; they are maintained here now, and the
- * toolchain no longer carries alpha 19.
- */
+/** The standalone server's own sources, vendored as first-class files (`sources.json` is the provenance). Until 2026-11-15 they came from a patched alpha 19 tree. */
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
@@ -116,10 +110,8 @@ export async function treeSha256(dir: string): Promise<string> {
 }
 
 /**
- * The host uWebSockets checkout with `uSockets/uSockets.a` built, kept where the alpha 19 compiler kept it
- * (`~/.cache/porffor/deps/uWebSockets-<commit>`, so existing caches are reused): the CLI seeds the
- * cross-target checkouts from its vendored archive; a host build without one fetches the pinned commit
- * (git), applies the vendored patches, and builds uSockets (make, `CC` or `cc`).
+ * The host uWebSockets checkout with `uSockets.a` built, kept where the alpha 19 compiler kept it so existing caches are reused: the CLI
+ * seeds cross-target checkouts from its archive; a host build without one fetches the pinned commit, patches it and runs make.
  */
 export async function ensureHostUws(): Promise<string> {
   const cacheRoot = resolve(homedir(), ".cache/porffor/deps");

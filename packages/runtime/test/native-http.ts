@@ -7,11 +7,8 @@ import { join } from "node:path";
 import { compileNative } from "./native-compile";
 import { preludePath, TRANSPORT_MARKER, transportPath, wrapNativeFetchHandler } from "../src/wrap";
 
-// The native HTTP server's wire behaviour with raw sockets: keep-alive, pipelining (responses in
-// order, also when a request arrives in pieces), a response bigger than the socket buffer to a slow
-// reader (partial writes), a large request body, and many connections at once. Run once with a
-// collection after every request (SB_GC_EVERY=1) and once with the default interval, so the
-// collection schedule is shown not to disturb any of it.
+// The native HTTP server's wire behaviour with raw sockets: keep-alive, pipelining, partial writes to a slow reader, large bodies, many
+// connections. Run with a collection after every request (SB_GC_EVERY=1) and with the default interval.
 const handler = `export default {async fetch(request) {
   const url = new URL(request.url);
   const path = url.pathname;

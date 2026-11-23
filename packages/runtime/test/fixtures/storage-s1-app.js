@@ -1,9 +1,5 @@
-// Storage stage S1 fixture: one handler that writes every kind of file stage S1 captures, and the disposable tables it moves.
-//   /kv/put?k=K&v=V  /kv/get?k=K     KV  (store.sqlite)
-//   /d1/put?v=V      /d1/all         D1  (d1/DB.sqlite)
-//   /do/ID/put?v=V   /do/ID/all      a Durable Object: storage.put and storage.sql  (do-sql/Obj/<id>.sqlite, store.sqlite)
-//   /rl /ae                          a rate limiter and an Analytics Engine write (volatile.sqlite when store is captured)
-//   anything else                    "plain": touches no binding
+// Storage stage S1 fixture: one handler writing every kind of file S1 captures: /kv/{put,get}, /d1/{put,all}, /do/ID/{put,all}, /rl, /ae,
+// and anything else is "plain" (touches no binding).
 const json = (v, status = 200) =>
   new Response(JSON.stringify(v), { status, headers: { "content-type": "application/json" } });
 

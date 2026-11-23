@@ -5,14 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { restore } from "./ltx-restore.ts";
 
-// Design 029 stage S1b on a COMPILED standalone binary: group commit (SB_LTX_GROUP=1) through the prelude's promise barrier, and the
-// capture's new write path, under concurrent HTTP load.
-//   correctness  N clients put rows through D1; every 200 is an acknowledged row; none is missing afterwards, and the spool restores to
-//                the database. Then a SIGKILL under load: every row that got a 200 survives the restart.
-//   throughput   one table: capture off, capture on without and with group commit, by number of concurrent clients (printed; JSON
-//                to SB_S1B_BENCH_JSON). Run it on the machine whose disk you mean to measure.
-// Needs SB_CLI (a sproutboat-cli checkout linked to this one, which builds the sprout) or SB_APP_BINARY (a binary built earlier, from
-// test/fixtures/storage-s1-app.js with the config below, for the same CPU and OS as this machine).
+// Design 029 stage S1b on a COMPILED standalone binary under concurrent HTTP load: correctness (every 200 is an acknowledged row, none missing, the spool
+// restores, survives SIGKILL) and throughput (capture off/on, with and without group commit; JSON to SB_S1B_BENCH_JSON). Needs SB_CLI or SB_APP_BINARY.
 const cli = process.env.SB_CLI;
 const prebuilt = process.env.SB_APP_BINARY;
 if (!cli && !prebuilt) {

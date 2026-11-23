@@ -2,18 +2,8 @@ import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
-// The driver of design 029 stage S1b's tests: the exact inline C of the embedded transport (the LTX and handle-table
-// regions), compiled against SQLite, taking one command per line on stdin (the handle table is process-global).
-//
-//   sql KIND NAME SQL        run SQL and the after-statement step, as the runtime does: "RC TEXT"
-//   sqld KIND NAME SQL       the same with the commit held back (group commit): "D RC", an ack only after flush
-//   flush                    the group flush: "0 flushed" (the ack of every sqld before it) or "-1 failed"
-//   owed                     "1" when a commit is owed or uncaptured, else "0"
-//   open / close KIND NAME   the handle table's open and close
-//   state KIND NAME          JSON: txid, synced, frames, pending, offset, mode, epoch of the capture state
-//   stats                    JSON counters (opens, syncs)
-//   quit
-// KIND is d1 NAME, store, do CLASS/HEX or vol, as in native-storage-s1.ts.
+// The driver of design 029 stage S1b's tests: the embedded transport's inline C (LTX and handle-table regions) compiled against SQLite, one command
+// per line on stdin: sql | sqld (commit held back, ack after flush) | flush | owed | open / close | state | stats | quit. KIND is d1 NAME, store, do CLASS/HEX or vol.
 export type Driver = {
   send(line: string): Promise<string>;
   quit(): Promise<void>;

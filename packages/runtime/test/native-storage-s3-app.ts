@@ -3,19 +3,9 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// Design 029 stage S3, worker side, on a COMPILED standalone binary: the acknowledgement gate's counters and the waits that only
-// the worker can make. (The host holds replies and WebSocket messages; sproutd's test/storage-s3-smoke.ts covers that half.
-// Here there is no host, so SB_GATE_TEST_CONFIRM_MS stands in for it: the commits seen so far count as confirmed that many
-// milliseconds after somebody first waited for them.)
-//   position        every captured commit (D1, KV, Durable Object storage) moves the commit counter by one; reads do not
-//   allowUnconfirmed  a storage call that passes it does not move the counter
-//   outgoing calls  fetch() after an unconfirmed commit waits for the confirmation, and goes out as soon as it came; a call with
-//                   nothing unconfirmed is not delayed
-//   sync()          resolves when what was committed has been confirmed
-//   off             without SB_LTX_GATE, and on a compatibility date before the gate's (2026-11-20), nothing is counted and
-//                   nothing waits
-// Needs SB_CLI (a sproutboat-cli checkout linked to this one, which builds the sprout) or SB_APP_BINARY and SB_APP_BINARY_OLD
-// (sprouts built earlier from test/fixtures/storage-s3-app.js, with compatibility dates 2026-11-21 and 2026-11-19).
+// Design 029 stage S3, worker side, on a COMPILED standalone binary: the acknowledgement gate's counters and the worker-only waits (no host here, so
+// SB_GATE_TEST_CONFIRM_MS stands in for confirmation). Covers position, allowUnconfirmed, fetch() waiting on an unconfirmed commit, sync(), and off
+// without SB_LTX_GATE or before compat 2026-11-20. Needs SB_CLI, or SB_APP_BINARY and SB_APP_BINARY_OLD built from test/fixtures/storage-s3-app.js.
 const cli = process.env.SB_CLI;
 const prebuilt = process.env.SB_APP_BINARY;
 const prebuiltOld = process.env.SB_APP_BINARY_OLD;

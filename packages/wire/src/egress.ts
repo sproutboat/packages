@@ -1,20 +1,7 @@
 /**
- * Outbound `fetch()` for sprouts: the private-address block (#174) and the
- * egress service (baronunread/sproutboat#252).
- *
- * The broker normally fetches itself. On the systemd install it runs inside the
- * edge unit, whose `IPAddressDeny=any` keeps sprouts off the network and the
- * broker with them, so it hands each request to this service instead: a
- * separate unit outside that cgroup, listening on loopback. Sprouts share
- * loopback, so every call carries a token that only brokers are given (the
- * sprout sandbox clears its environment).
- *
- *   SB_EGRESS_TOKEN=... bun egress.ts --port 8070
- *
- * Either way the request goes through `vettedFetch`, so the address checks and
- * `SB_EGRESS_ALLOW` behave identically. `connect()` sockets take the same road: a raw TCP
- * listener next to the HTTP one (`--tcp-port`, default the HTTP port + 1) runs the tunnel from
- * tcp.ts with the same token and the same vetting.
+ * Outbound `fetch()` for sprouts: the private-address block (#174) and the egress service (#252). On the systemd install the broker
+ * runs inside the edge unit (`IPAddressDeny=any`), so it hands each request to this service in a separate unit; every call carries a
+ * token only brokers hold, because sprouts share loopback. `connect()` sockets take the same road (`--tcp-port`, default HTTP + 1).
  */
 import { timingSafeEqual } from "node:crypto";
 import { lookup } from "node:dns/promises";

@@ -502,10 +502,8 @@ int main(void) {
     () => ops.__sbD1Run(db2, "SELECT ?1", [], true),
     (e: Error) => e.message === "D1_ERROR: Wrong number of parameter bindings for SQL query.",
   );
-  // LTX capture on (SB_LTX_ENABLE, database LTX): a batch is one commit, and a capture
-  // that fails at RELEASE (after SQLite committed) surfaces as itself: SQLITE_IOERR with a
-  // message that says so, never "no such savepoint" from the cleanup, and the database then
-  // refuses writes until restart.
+  // LTX capture on: a batch is one commit, and a capture that fails at RELEASE (after SQLite committed) surfaces as SQLITE_IOERR with a message
+  // saying so, never "no such savepoint" from the cleanup; the database then refuses writes until restart.
   const ltx = join(work, "data/d1/LTX.sqlite");
   const generation = () => join(ltx + ".ltx", readFileSync(ltx + ".ltx/position", "utf8").split("\n")[1]);
   const ltxFiles = () => readdirSync(generation()).filter((n) => n.endsWith(".ltx")).length;
@@ -661,10 +659,8 @@ int main(void) {
   closeSync(fromDriver);
   await driver.exited;
 
-  // A restart that finds the app over its quota, capture on: the first D1 call of the new
-  // worker (process) already freezes. Reads work, writes are refused, the spool and its
-  // position stay exactly as they were, and the chain restores the database byte for byte.
-  // A capture failure still reads as one, over the quota too.
+  // A restart that finds the app over its quota, capture on: the first D1 call of the new worker already freezes (reads work, writes are refused,
+  // the spool and position stay as they were, the chain restores the database). A capture failure still reads as one, over the quota too.
   await rm(ltx + ".ltx/position.tmp", { recursive: true, force: true });
   const second = connect("restart");
   const quota2 = second.liftQuota(data, 1);
@@ -712,10 +708,8 @@ int main(void) {
   assert.match(failedOver.error, /^LTX capture failed/);
   third.close();
   await third.exited;
-  // Locking mode. This driver is the transport on its own, as sproutd and the broker embed it (no
-  // standalone shim): unset it must stay shared, so those hosts behave as before. SB_SQLITE_EXCLUSIVE=1 is
-  // exclusive for a plain database; anything else, 0 included, is shared. A database under LTX replication
-  // is never exclusive.
+  // Locking mode. This driver is the bare transport as sproutd and the broker embed it: unset it must stay shared. SB_SQLITE_EXCLUSIVE=1 is exclusive
+  // for a plain database, anything else shared; a database under LTX replication is never exclusive.
   const lockingMode = (env: Record<string, string>, path: string) => {
     const e = Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== "SB_SQLITE_EXCLUSIVE"));
     const p = Bun.spawnSync([binary], {

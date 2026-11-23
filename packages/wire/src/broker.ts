@@ -1,21 +1,7 @@
 #!/usr/bin/env bun
 /**
- * Per-deployment binding broker.
- *
- * A native-fetch sprout has no syscalls of its own beyond an inbound HTTP
- * server; the prelude's inline-C transport opens a loopback TCP connection to
- * this process for every `env.<KV>` / `env.<SECRET>` / `fetch()` call. The
- * supervisor starts one broker per deployment, on its own loopback port, and
- * passes `SB_BROKER_PORT` + `SB_BROKER_TOKEN` to the sprout next to `$PORT`.
- *
- * Wire frame (both directions): [u32 LE length][payload].
- *   request payload : "<token>\n<json>"
- *   reply payload   : "<json>"
- *
- * ponytail: one SQLite file for KV, secrets from a plain JSON file, fetch
- * to any public address, never a private one (#174).
- * Encryption at rest and per-key TTLs are v2; redirects are never followed,
- * so there is nothing to re-validate.
+ * Per-deployment binding broker: the sprout reaches it over loopback TCP, frames are [u32 LE length][payload],
+ * a request payload is "<token>\n<json>". fetch() goes to public addresses only, never private ones (#174).
  */
 import { createD1Store } from "./d1";
 import type { D1Pool } from "./d1-pool";
@@ -49,8 +35,8 @@ export type Bindings = {
   d1: string[];
   r2: string[];
   queues: string[];
-  /** Each queue binding's name and consumer settings (`queueSettings` in @sproutboat/config).
-   *  The broker reads the batch settings; the sprout applies the retry settings. */
+  /** Each queue binding's name and consumer settings (`queueSettings` in @sproutboat/config): the broker reads the
+   *  batch settings, the sprout applies the retry settings. */
   queueConfig?: Array<{
     binding: string;
     queue: string;
@@ -58,7 +44,6 @@ export type Bindings = {
     maxBatchTimeout?: number;
     maxRetries?: number;
     retryDelay?: number;
-    /** The queue name of this queue's dead letter queue. */
     deadLetterQueue?: string;
   }>;
   analytics: string[];
@@ -72,10 +57,8 @@ export type Bindings = {
   /** Static-asset binding name, or `""` when assets are edge-only. */
   assets: string;
   /**
-   * #74 — binding name -> account-level resource it resolves to. A binding with
-   * an entry here stores in a per-resource SQLite file under `resourceDir`,
-   * keyed by `id`, shared across this owner's deployments; a binding without one
-   * falls back to the per-broker `db` partitioned by its own name (local dev).
+   * #74 - binding name -> account-level resource: stored in a per-resource SQLite file under `resourceDir`,
+   * shared across this owner's deployments. A binding without one uses the per-broker `db` (local dev).
    */
   resources: Record<string, { kind: "kv" | "d1" | "r2" | "queue"; id: string }>;
 };
@@ -83,48 +66,34 @@ export type Bindings = {
  *  an optional reply field can be left off without a second object shape. */
 export type Frame = { [key: string]: JsonValue | undefined };
 
-/** The only shape of `fetch` the broker calls — the global `fetch` satisfies it. */
 export type FetchLike = (input: URL | string, init?: RequestInit) => Promise<Response>;
 
 export type BrokerOptions = {
-  /** Shared-mode SQL isolation, owned by the multi-session worker. */
   d1Pool?: D1Pool;
   db?: string;
   /** Directory for per-D1-binding SQLite files. Defaults to `<dirname(db)>/d1`, or in-memory when `db` is `:memory:`. */
   dataDir?: string;
   /**
-   * #48 — where to send a service-binding call: the node's edge, on loopback.
-   * Forwarding through the edge rather than dialling the target sprout directly
-   * reuses everything the request path already does — routing, the process
-   * pool, cold start, metrics, logs — and means the broker needs no knowledge
-   * of where a deployment is running.
+   * #48 - where a service-binding call goes: the node's edge, on loopback. Going through the edge reuses
+   * routing, the process pool, cold start, metrics and logs, so the broker never needs to know where a deployment runs.
    */
   edgeUrl?: string;
   /**
-   * The edge's secret for service-binding calls (`SB_EDGE_SECRET`). With it, a call
-   * carries the secret and the caller's URL, so the edge can vouch for the call to the
-   * callee: the callee then sees that URL, and a callee that throws throws in the caller.
+   * The edge's secret for service-binding calls (`SB_EDGE_SECRET`): with it the edge can vouch for a call to the
+   * callee, which then sees the caller's URL, and a callee that throws throws in the caller.
    */
   edgeSecret?: string;
   /**
-   * #48 — binding name -> the target's hostname, resolved by the control plane
-   * at activation. Not part of the artifact: the same binary deploys to boxes
-   * with different domains, and a target can be redeployed without rebuilding
-   * its callers.
+   * #48 - binding name -> the target's hostname, resolved by the control plane at activation. Not in the artifact:
+   * the same binary deploys to boxes with different domains, and a target can redeploy without rebuilding callers.
    */
   services?: Record<string, string>;
   /**
-   * #74 — directory holding one `<resource-id>.sqlite` per account-level KV / R2 /
-   * queue / D1 resource. Defaults to `<dirname(db)>/resources`, in-memory when
-   * `db` is `:memory:`. The supervisor points this at an owner-stable path so the
-   * data outlives a redeploy.
+   * #74 - directory of one `<resource-id>.sqlite` per account-level KV / R2 / queue / D1 resource (default
+   * `<dirname(db)>/resources`). The supervisor points it at an owner-stable path so data outlives a redeploy.
    */
   resourceDir?: string;
-  /**
-   * #207 — SQLite file for Durable Object storage and alarms. The supervisor
-   * points this at a per-project path, so an object's state outlives a
-   * redeploy as it does on Workers. Defaults to the per-broker `db`.
-   */
+  /** #207 - SQLite file for Durable Object storage and alarms, per project so state outlives a redeploy as on Workers. Defaults to `db`. */
   doDb?: string;
   /** Account whose R2 resources this broker may mutate. */
   ownerId?: string;
@@ -140,9 +109,8 @@ export type BrokerOptions = {
   bindings?: Partial<Bindings>;
   secrets?: Record<string, string>;
   /**
-   * `http://127.0.0.1:<PORT>` of this deployment's sprout. When set, the broker
-   * runs the cron scheduler and the queue consumer, delivering to the sprout
-   * with an `x-sb-trigger` header authenticated by `token`.
+   * `http://127.0.0.1:<PORT>` of this deployment's sprout. When set, the broker runs the cron scheduler and the
+   * queue consumer, delivering with an `x-sb-trigger` header authenticated by `token`.
    */
   sproutUrl?: string;
   /** Lets a supervisor prepare a replacement without two brokers claiming
@@ -209,25 +177,12 @@ const MAX_FRAME = 32 * 1024 * 1024;
 const str = (v: JsonValue | undefined): string => (isString(v) ? v : String(v ?? ""));
 
 export type Broker = {
-  /** Run one parsed request object through the op dispatch. */
   dispatch(msg: Frame): Promise<Frame>;
-  /** Verify the token line and dispatch a raw "<token>\n<json>" payload. */
   handlePayload(payload: string): Promise<Frame>;
   /**
-   * #63 — one wire frame in, one out, binary included.
-   *
-   * v0 payloads are `"<token>\n<json>"` and stay exactly as they were: a
-   * deployment built before this existed keeps working against a newer broker.
-   * v1 starts with a 0x01 marker and carries `[u32 LE json length][json][bytes]`,
-   * so an object body never has to be escaped into the JSON. A token's first
-   * character is never 0x01, which is what makes the two tellable apart without
-   * negotiation. `signal` aborts when the sprout's connection closes: a `fetch` or
-   * `service.fetch` in flight then stops its upstream request too. With `emit`, a
-   * `fetch` or `service.fetch` that asks to stream (`stream: true`) sends its head and
-   * each body chunk through it as they arrive (FRAME_V1_MORE frames); the returned
-   * frame ends the response. With `body`, a `fetch` or `service.fetch` whose head asked
-   * for it (`bodyStream: true`) sends that stream as its request body: the listener feeds
-   * it from the FRAME_V1_MORE frames that follow the head on the same connection.
+   * #63 - one frame in, one out, binary included. v0 is `"<token>\n<json>"`, kept for older deployments; v1 starts with
+   * 0x01 (a token never does) and carries `[u32 LE json length][json][bytes]`. `signal` aborts when the connection
+   * closes; `emit` streams a fetch head and chunks, `body` feeds a streamed request body (both FRAME_V1_MORE).
    */
   handleFrame(
     payload: Buffer,
@@ -235,21 +190,15 @@ export type Broker = {
     emit?: FrameEmitter,
     body?: ReadableStream<Uint8Array>,
   ): Promise<Buffer>;
-  /** Serve one reserved direct R2 upload or download request. */
   transfer(request: Request): Promise<Response>;
-  /** `connect()` tunnels: the listener hands a connection that opened with `tcp.open` to this. */
   tcp: TcpTunnels;
   close(): void;
 };
 
-/** First byte of a v1 payload. */
 export const FRAME_V1 = 1;
-/** A v1 frame with more to follow for the same request: a streamed response's head and chunks. */
 export const FRAME_V1_MORE = 2;
-/** Sends one frame for the request being handled, ahead of its final one. */
 export type FrameEmitter = (frame: Buffer) => Promise<void>;
 
-/** Wrap a payload in the [u32 LE length] header every frame carries. */
 export function frameOf(payload: Buffer): Buffer {
   const out = Buffer.allocUnsafe(4 + payload.length);
   out.writeUInt32LE(payload.length, 0);
@@ -257,7 +206,6 @@ export function frameOf(payload: Buffer): Buffer {
   return out;
 }
 
-/** Build a v1 payload: marker, json length, json, then the bytes. */
 export function encodeV1(json: Frame, binary?: Uint8Array, more = false): Buffer {
   const body = Buffer.from(JSON.stringify(json), "utf8");
   const bin = binary ?? new Uint8Array(0);
@@ -333,10 +281,8 @@ export function createBroker(opts: BrokerOptions = {}): Broker {
   const d1Dir = opts.dataDir ?? (inMemory ? null : join(dirname(resolve(dbPath)), "d1"));
   const resourceDir = opts.resourceDir ?? (inMemory ? null : join(dirname(resolve(dbPath)), "resources"));
 
-  // WAL + NORMAL is the standard pairing: a write no longer fsyncs the WAL, so
-  // host power loss can drop the last few committed txns, but a process crash
-  // never can and the file never corrupts. Right trade for a single-VPS
-  // KV/queue/DO store; on real block storage this is ~10-100x on writes.
+  // WAL + NORMAL: host power loss can drop the last few committed txns, a process crash never can and the file
+  // never corrupts. Right trade for a single-VPS store.
   const openStore = (path: string): Database => {
     const conn = new Database(path, { create: true });
     conn.exec("PRAGMA journal_mode = WAL");
@@ -354,12 +300,8 @@ export function createBroker(opts: BrokerOptions = {}): Broker {
       conn.exec("ALTER TABLE kv ADD COLUMN binary INTEGER NOT NULL DEFAULT 0");
     // A key's metadata (put(key, value, { metadata })), as JSON text.
     if (!kvColumns.some((column) => column.name === "metadata")) conn.exec("ALTER TABLE kv ADD COLUMN metadata TEXT");
-    // #56 — no `body` column: an object's bytes live in their own file under
-    // `r2Dir` (or an in-memory map for `:memory:`), never in the SQLite row.
-    // Doubling every object through SQLite's own page cache on top of the
-    // buffer it already arrived in was the real cost driving #56's "large
-    // uploads make memory skyrocket" complaint, not just the JSON-escaping
-    // #63 already fixed.
+    // #56 - no `body` column: an object's bytes live in their own file under `r2Dir` (or an in-memory map for
+    // `:memory:`), never in SQLite: doubling every object through its page cache was the large-upload memory cost.
     conn.exec(
       "CREATE TABLE IF NOT EXISTS r2 (bucket TEXT NOT NULL, key TEXT NOT NULL, size INTEGER NOT NULL, " +
         "etag TEXT NOT NULL, uploaded TEXT NOT NULL, http_json TEXT NOT NULL DEFAULT '{}', custom_json TEXT NOT NULL DEFAULT '{}', " +
@@ -442,21 +384,17 @@ export function createBroker(opts: BrokerOptions = {}): Broker {
   doDb.exec(
     "CREATE TABLE IF NOT EXISTS do_alarm_delivery (cls TEXT NOT NULL, id TEXT NOT NULL, at INTEGER NOT NULL, attempts INTEGER NOT NULL, token TEXT NOT NULL, expires INTEGER NOT NULL, PRIMARY KEY(cls,id))",
   );
-  // #69 — fixed-window rate-limiter counters, per binding name + key.
   db.exec(
     "CREATE TABLE IF NOT EXISTS ratelimit (name TEXT NOT NULL, key TEXT NOT NULL, window_start INTEGER NOT NULL, " +
       "count INTEGER NOT NULL, PRIMARY KEY (name, key))",
   );
-  // #59 — caches.default: ambient, not a resource a project binds (no config
-  // key), so it lives in the per-deployment db like do_storage/ae rather than
-  // going through the account-level resource registry. Key on method+URL for
-  // v1, per the issue's own scoped-down ask; no Vary support yet.
+  // #59 - caches.default is ambient (no config key), so it lives in the per-deployment db, not the resource
+  // registry. Keyed on method+URL; no Vary support yet.
   db.exec(
     "CREATE TABLE IF NOT EXISTS cache (name TEXT NOT NULL, cache_key TEXT NOT NULL, status INTEGER NOT NULL, " +
       "headers_json TEXT NOT NULL, body TEXT NOT NULL, expires_at INTEGER, PRIMARY KEY (name, cache_key))",
   );
 
-  // #74 — one SQLite file per account-level resource id, opened on first use.
   const resourceDbs = new Map<string, Database>();
   const resourceDb = (id: string): Database => {
     let conn = resourceDbs.get(id);
@@ -610,11 +548,7 @@ export function createBroker(opts: BrokerOptions = {}): Broker {
     quotaDb.query(`UPDATE r2_transfer_metric SET ${field} = ${field} + 1 WHERE owner = ?`).run(quotaOwner);
   };
 
-  /**
-   * Where a KV / R2 / queue binding stores: its resource's own file keyed by
-   * `id` when the config bound it to one, else the per-broker `db` partitioned
-   * by the binding name (bare-string bindings / local dev).
-   */
+  // A binding's resource file keyed by `id` when bound to one, else the per-broker `db` partitioned by binding name.
   const storeFor = (kind: "kv" | "r2" | "queue", binding: string): { store: Database; part: string } => {
     const resource = bindings.resources[binding];
     return resource && resource.kind === kind
@@ -648,10 +582,8 @@ export function createBroker(opts: BrokerOptions = {}): Broker {
             "ON CONFLICT (ns, key) DO UPDATE SET value = ?3, expires_at = ?4, binary = ?5, metadata = ?6",
         ),
         del: store.query("DELETE FROM kv WHERE ns = ? AND key = ?"),
-        // #58 — an expired row is filtered out here; a periodic sweep to hard-delete
-        // it is a separate concern (ponytail: rows accumulate until touched by a
-        // get/list/put on the same key/prefix, add a cron sweep if that matters).
-        // The prefix matches exactly: LIKE ignored case and read "_" and "%" as wildcards.
+        // #58 - an expired row is filtered out here, not hard-deleted until touched. The prefix matches exactly: LIKE
+        // ignored case and read "_" and "%" as wildcards.
         list: store.query<
           { key: string; expires_at: number | null; metadata: string | null },
           [string, string, string, number, number]
@@ -667,8 +599,6 @@ export function createBroker(opts: BrokerOptions = {}): Broker {
   /** CF's own floor. Cloudflare rejects `expirationTtl < 60`; matched here so a
    *  handler ported from Workers gets the same validation error either place. */
   const MIN_KV_TTL_SECONDS = 60;
-  /** `{ expirationTtl }` (seconds from now) or `{ expiration }` (absolute unix
-   *  seconds) -> ms epoch, or `null` for no expiry. */
   const kvExpiresAt = (msg: Frame): number | null => {
     if (isNumber(msg.expirationTtl)) {
       if (msg.expirationTtl < MIN_KV_TTL_SECONDS)
@@ -690,7 +620,6 @@ export function createBroker(opts: BrokerOptions = {}): Broker {
   const requireD1 = bound(bindings.d1, "D1 database");
   const requireR2 = bound(bindings.r2, "R2 bucket");
   const requireQueue = bound(bindings.queues, "queue");
-  /** A queue's backlog as Queues reports it: live messages, their bytes, the oldest send time. */
   const queueBacklog = (store: Database, part: string): JsonObject => {
     const r = store
       .query<{ n: number; bytes: number; oldest: number | null }, [string]>(
@@ -704,7 +633,6 @@ export function createBroker(opts: BrokerOptions = {}): Broker {
   const queueStore = (part: string): { store: Database; part: string } =>
     part.startsWith("#") ? { store: db, part } : storeFor("queue", requireQueue(part));
   const queueSettingsOf = (binding: string) => bindings.queueConfig?.find((q) => q.binding === binding);
-  /** Queue bindings whose sprout follows the 2026-11-05 delivery rules (see "queue.consumer"). */
   const strictQueues = new Set<string>();
   /** The partition of a queue binding's dead letter queue: its binding when the sprout binds that
    *  queue, else "#name" (as the sprout computes it), or "" when there is none. */
@@ -725,10 +653,8 @@ export function createBroker(opts: BrokerOptions = {}): Broker {
   };
   const newId = () => createHash("sha256").update(`${Date.now()}:${Math.random()}`).digest("hex").slice(0, 24);
 
-  // One SQLite database per bound D1 binding — independent SQL namespaces. A
-  // binding wired to an account-level resource (#74) opens `<resource-id>.sqlite`
-  // under `resourceDir` (survives redeploys); a bare-string binding keeps its
-  // per-broker `<name>.sqlite` under `d1Dir`.
+  // One SQLite database per D1 binding: `<resource-id>.sqlite` under `resourceDir` for an account-level one (#74),
+  // else `<name>.sqlite` under `d1Dir`.
   const d1Store = createD1Store();
   const d1Session = opts.d1Pool?.session();
   const d1 = (name: string, msg: Frame): Frame | Promise<Frame> => {
@@ -742,11 +668,9 @@ export function createBroker(opts: BrokerOptions = {}): Broker {
     return d1Session ? d1Session.execute(request) : d1Store.execute({ ...request, owner: "dedicated" });
   };
 
-  // Durable Objects storage.sql (the shim's compatibility date 2026-10-29): one SQLite file per
-  // object, `<do-sql>/CLASS/FILE.sqlite`, run as a strict D1 query. The directory is named
-  // after the DO store file: several projects keep their doDb side by side.
-  // FILE is the object's 64-hex id (or a hash of an older id); the class must be bound.
-  // Without a SQL pool, at most 64 stay open; the one used longest ago closes first.
+  // Durable Objects storage.sql (compat 2026-10-29): one file per object, `<do-sql>/CLASS/FILE.sqlite`, run as a strict
+  // D1 query. FILE is the object's 64-hex id (or a hash of an older id); the class must be bound.
+  // Without a SQL pool at most 64 stay open, the least recently used closing first.
   const doSqlDir = opts.doDb
     ? `${resolve(opts.doDb).replace(/\.sqlite$/, "")}.do-sql`
     : inMemory
@@ -763,15 +687,8 @@ export function createBroker(opts: BrokerOptions = {}): Broker {
     return d1Session ? d1Session.execute(request) : doSqlStore.execute({ ...request, owner: "dedicated" });
   };
 
-  /**
-   * #56 — an object's bytes never enter SQLite; they live in their own file,
-   * named by a hash of bucket+key (so unicode keys and directory traversal
-   * are both non-issues), colocated with whichever store file holds that
-   * bucket's metadata — the main `db` for a bare-string binding, the
-   * resource's own file under `resourceDir` for an account-level one (#74) —
-   * so blobs persist across a redeploy exactly when that metadata does.
-   * `:memory:` stores (tests, `db: ":memory:"`) fall back to an in-memory map.
-   */
+  // #56 - an object's bytes never enter SQLite: they live in a file named by a hash of bucket+key (so unicode keys
+  // and traversal are non-issues), beside the store file holding the bucket's metadata. `:memory:` uses a map.
   const r2MemBlobs = new Map<string, Uint8Array>();
   const r2MemParts = new Map<string, Uint8Array>();
   const r2BlobId = (bucketPart: string, key: string, generation?: string | null): string =>
@@ -1272,11 +1189,9 @@ export function createBroker(opts: BrokerOptions = {}): Broker {
     return r2Row(row);
   };
 
-  // One page of r2.list for the shim from 2026-10-26: at most LIMIT entries after CURSOR,
-  // keys under PREFIX, those holding DELIMITER after it grouped into delimitedPrefixes (a
-  // group counts as one entry). Same rules as the embedded transport's __sbR2ListPage.
-  // ponytail: with a delimiter every key after the cursor is read; an index on the
-  // delimited prefix if buckets grow past ~100k keys.
+  // One page of r2.list (shim from 2026-10-26): at most LIMIT entries after CURSOR under PREFIX, keys holding
+  // DELIMITER grouped into delimitedPrefixes (a group counts as one entry). Same rules as __sbR2ListPage.
+  // With a delimiter every key after the cursor is read; index the delimited prefix if buckets pass ~100k keys.
   const r2ListPage = (
     store: Database,
     bucket: string,
@@ -1321,15 +1236,8 @@ export function createBroker(opts: BrokerOptions = {}): Broker {
     md5: r.md5 ?? null,
   });
 
-  /**
-   * An outbound response body, refused past a cap.
-   *
-   * The size is the remote host's choice, and the body is held whole: measured
-   * on a standalone binary, a 100 MB response took resident memory from 43 MB
-   * to 321 MB. One upstream having a bad day should not be able to
-   * end the process. 32 MiB by default, and the same variable the embedded
-   * transport reads so both backends agree.
-   */
+  // An outbound response body is held whole and its size is the remote host's choice: a 100 MB response took
+  // a standalone binary from 43 MB to 321 MB resident. Refused past 32 MiB, the same variable the embedded transport reads.
   const fetchMaxBytes = () => Number(process.env.SB_FETCH_MAX_BYTES) || 32 * 1024 * 1024;
   async function readCapped(response: Response, host: string): Promise<Buffer> {
     const cap = fetchMaxBytes();
@@ -1352,12 +1260,8 @@ export function createBroker(opts: BrokerOptions = {}): Broker {
     return Buffer.concat(parts);
   }
 
-  /**
-   * #232 — an upstream response as metadata plus its raw bytes. The v0 frame
-   * carries the body as UTF-8 text inside the JSON (what already-deployed
-   * sprouts expect), which turns a binary body into U+FFFD soup; the v1 frame
-   * sends the bytes untouched in its binary section instead.
-   */
+  // #232 - an upstream response as metadata plus raw bytes: the v0 frame carries the body as UTF-8 text in the
+  // JSON (what deployed sprouts expect), which garbles binary, so v1 sends the bytes in its binary section.
   type Upstream = { reply: Frame; bytes: Buffer };
   const asTextFrame = (u: Upstream) => ({ ...u.reply, body: new TextDecoder().decode(u.bytes) });
 
@@ -1384,11 +1288,8 @@ export function createBroker(opts: BrokerOptions = {}): Broker {
     return res;
   }
 
-  /**
-   * An upstream response, streamed: its head now, then each body chunk as it arrives,
-   * under the same cap as a whole body. `emit` resolves once the sprout's socket has
-   * taken the frame, so a slow reader slows the upstream read too.
-   */
+  // An upstream response streamed under the same cap: head now, then chunks. `emit` resolves once the sprout's socket
+  // took the frame, so a slow reader slows the upstream read too.
   async function streamUpstream(res: Response, host: string, emit: FrameEmitter): Promise<Upstream> {
     const headers: Array<[string, string]> = [];
     res.headers.forEach((v, k) => headers.push([k, v]));
@@ -1446,14 +1347,9 @@ export function createBroker(opts: BrokerOptions = {}): Broker {
     return { reply: { ok: true, status: res.status, headers: outHeaders }, bytes: await readCapped(res, url.host) };
   }
 
-  /**
-   * #48 — forward a service-binding call to the target deployment via the edge.
-   *
-   * The Host header is the whole routing decision: the edge matches a route by
-   * hostname, so this is exactly the request the outside world would make,
-   * minus the trip through the network (and therefore minus TLS and the
-   * default-deny egress rules, which is why this is not `fetch`).
-   */
+  // #48 - forward a service-binding call to the target deployment via the edge. The Host header is the whole
+  // routing decision, so this is the request the outside world would make minus the network: no TLS and no
+  // default-deny egress rules, which is why this is not `fetch`.
   async function serviceFetch(
     msg: Frame,
     signal?: AbortSignal,
@@ -2019,10 +1915,7 @@ export function createBroker(opts: BrokerOptions = {}): Broker {
     }
   }
 
-  /**
-   * #63 — the ops that carry bytes rather than escaping them into the frame.
-   * Everything else goes through `dispatch` untouched.
-   */
+  // #63 - the ops that carry bytes instead of escaping them into the frame; everything else goes through `dispatch`.
   async function dispatchBinary(
     msg: Frame,
     binary: Uint8Array,
@@ -2080,7 +1973,6 @@ export function createBroker(opts: BrokerOptions = {}): Broker {
       };
     }
 
-    // #232 — a v1 fetch gets the upstream body as raw bytes, not decoded text.
     if (msg.op === "fetch") return proxyFetch(msg, signal, emit, body);
     if (msg.op === "service.fetch") return serviceFetch(msg, signal, emit, body);
 
@@ -2113,7 +2005,6 @@ export function createBroker(opts: BrokerOptions = {}): Broker {
     return { reply: await dispatchOnce(msg) };
   }
 
-  /** One wire frame in, one out. See `handleFrame` on the Broker type. */
   async function handleFrame(
     payload: Buffer,
     signal?: AbortSignal,
@@ -2143,15 +2034,9 @@ export function createBroker(opts: BrokerOptions = {}): Broker {
     }
   }
 
-  /**
-   * #63 §3 — ops that must not be applied twice.
-   *
-   * The transport retries the same bytes when a connection dies, and a broker
-   * that already applied a request but never got its reply out would otherwise
-   * apply it again: a second queue message, a second INSERT. Reads are absent
-   * deliberately — replaying a `d1.query` costs nothing and caching its reply
-   * could hold megabytes.
-   */
+  // #63 §3 - ops that must not be applied twice: the transport retries the same bytes when a connection dies, and a
+  // broker that applied a request but lost its reply would otherwise queue a second message or INSERT. Reads are
+  // absent on purpose: replaying a `d1.query` is free and caching its reply could hold megabytes.
   const REPLAYABLE = new Set([
     "kv.put",
     "kv.delete",
@@ -2181,8 +2066,7 @@ export function createBroker(opts: BrokerOptions = {}): Broker {
     "ae.write",
   ]);
 
-  /** How many recent replies to keep. A resend follows its original within
-   *  milliseconds, so this only has to outlive a reconnect, not a session. */
+  // A resend follows its original within milliseconds, so this only has to outlive a reconnect.
   const REPLAY_WINDOW = 256;
 
   const rememberReplay = (key: string, reply: Frame): void => {
@@ -2193,10 +2077,7 @@ export function createBroker(opts: BrokerOptions = {}): Broker {
     }
   };
 
-  /**
-   * Run `msg`, or replay what it answered last time. Keyed by the id the sprout
-   * put on the request; a request without one is always run.
-   */
+  // Run `msg`, or replay what it answered last time, keyed by the request's id (no id: always run).
   async function dispatchOnce(msg: Frame): Promise<Frame> {
     const id = isSafeInteger(msg.id) ? msg.id : null;
     const op = str(msg.op);
@@ -2223,7 +2104,6 @@ export function createBroker(opts: BrokerOptions = {}): Broker {
     }
   }
 
-  // --- cron + queue delivery (only when this broker knows its sprout) --------
   const timers: ReturnType<typeof setInterval>[] = [];
   const dispatchEnabled = () => opts.dispatchEnabled?.() ?? true;
   const QUEUE_BATCH = 10;
@@ -2572,18 +2452,9 @@ export function createBroker(opts: BrokerOptions = {}): Broker {
   };
 }
 
-/**
- * Minimal 5-field cron match (`min hour dom month dow`, UTC). Each field is a
- * comma list of: `*`, a step `*` + `/n`, a range `a-b`, or a plain number.
- */
-/**
- * Analytics Engine keeps a point count per dataset in ae_count, so query() reads one row instead of counting the dataset
- * (count(*) walks every index entry: O(n)). Two triggers keep it exact inside the statement that inserts or deletes,
- * whoever runs it: a broker of an older version that has no triggers of its own still counts through them, so a swap or a
- * rollback leaves no drift. The table is made, filled from the points already there and given its triggers in one
- * transaction, only when it is not there yet. Same table, triggers and rule as the embedded transport's
- * (runtime/src/transport-embedded.js).
- */
+// Analytics Engine keeps a point count per dataset in ae_count so query() reads one row, not count(*) (O(n)).
+// Two triggers keep it exact in the inserting statement, so an older broker without them still counts through them:
+// a swap or rollback leaves no drift. Same table, triggers and rule as transport-embedded.js.
 export function ensureAeCounter(db: Database): void {
   const probe = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ae_count'";
   if (db.query(probe).get()) return;
@@ -2607,17 +2478,9 @@ export function ensureAeCounter(db: Database): void {
   }
 }
 
-/**
- * Analytics Engine retention. Cloudflare keeps the data points for three months
- * (https://developers.cloudflare.com/analytics/analytics-engine/limits/, "Data retention"); 92 days is the longest three
- * months, so nothing is dropped that Cloudflare would still hold. A dataset also holds at most AE_MAX_ROWS points, the
- * oldest going first: a bound on disk for an app that writes a lot (Cloudflare has none, and no disk of ours).
- * Neither rule runs on a request's way in as one big delete: a write prunes its own dataset at most every
- * AE_PRUNE_EVERY_MS, and a run removes at most AE_PRUNE_BATCH points in all (both rules share it), through the
- * (dataset, ts) index. A backlog is worked off over the writes that follow; at a sustained rate above about 100 writes a
- * second to one dataset from one broker the cap is a soft bound. Same constants and rules as the embedded transport's,
- * except that the broker (the `sproutboat dev` store) has no compatibility date to gate on, so it always prunes.
- */
+// Analytics Engine retention: 92 days (the longest three months, so nothing is dropped that Cloudflare would hold)
+// and at most AE_MAX_ROWS points per dataset, oldest first, to bound disk. A write prunes its own dataset at most every
+// AE_PRUNE_EVERY_MS and a run removes at most AE_PRUNE_BATCH points. Same rules as the embedded transport; no compat date here.
 export const AE_MAX_AGE_MS = 92 * 86_400_000;
 export const AE_MAX_ROWS = 1_000_000;
 const AE_PRUNE_BATCH = 1000;
@@ -2673,7 +2536,6 @@ export function encodeFrame(obj: Frame): Buffer {
   return frame;
 }
 
-/** Where `connect()` tunnels go when the egress service does the connecting. */
 function egressTunnelEndpoint(egressUrl: string, explicit: string | undefined, token: string) {
   if (explicit) {
     const at = explicit.lastIndexOf(":");
@@ -2683,29 +2545,23 @@ function egressTunnelEndpoint(egressUrl: string, explicit: string | undefined, t
   return { host: url.hostname, port: Number(url.port || (url.protocol === "https:" ? 443 : 80)) + 1, token };
 }
 
-/** The bound TCP listener: the port actually assigned, and its shutdown handle. */
 export type BrokerServer = { port: number; stop(): void };
 
-/** Whether a payload is the head of a fetch whose request body follows in FRAME_V1_MORE frames. */
 function bodyStreamHead(payload: Buffer): boolean {
   if (payload.length < 5 || payload[0] !== FRAME_V1) return false;
   const jsonLen = payload.readUInt32LE(1);
   if (5 + jsonLen > payload.length) return false;
   const head = payload.subarray(5, 5 + jsonLen).toString("utf8");
-  // Cheap first: most frames are not this.
   if (!head.includes('"bodyStream":true')) return false;
   const msg = jsonObject(parseJsonValue(head));
   return msg?.bodyStream === true;
 }
 
-/** The request body of a streamed-body request, fed by the frames after its head. */
 type BodySink = {
   stream: ReadableStream<Uint8Array>;
-  /** A FRAME_V1_MORE payload: `{ chunk: true }` plus bytes, `{ end: true }`, or `{ error }`. */
   frame(payload: Buffer): void;
   fail(reason: string): void;
 };
-/** Bytes a streamed request body may hold unread before the sprout's connection is paused. */
 const BODY_SINK_HIGH = 4 * 1024 * 1024;
 function bodySink(socket: { pause(): void; resume(): void }): BodySink {
   let controller: ReadableStreamDefaultController<Uint8Array> | null = null;
@@ -2765,12 +2621,9 @@ function bodySink(socket: { pause(): void; resume(): void }): BodySink {
   };
 }
 
-/** Start the TCP listener. Returns the bound port. */
 export function listen(broker: Broker, hostname: string, port: number): BrokerServer {
-  // Chunks are held in a list and joined once, when a whole frame has arrived.
-  // Concatenating on every chunk copies the accumulated buffer each time, which
-  // is quadratic in the body size: an 8 MB object arriving in 64 KB pieces
-  // copied hundreds of megabytes before anything was parsed.
+  // Chunks are joined once, when a whole frame has arrived: concatenating per chunk is quadratic (an 8 MB object in
+  // 64 KB pieces copied hundreds of megabytes before parsing).
   type SocketState = {
     chunks: Buffer[];
     size: number;
@@ -2779,11 +2632,8 @@ export function listen(broker: Broker, hostname: string, port: number): BrokerSe
     output: Buffer | null;
     offset: number;
     written: (() => void) | null;
-    /** Aborted when the connection closes, so upstream requests it started stop. */
     abort: AbortController;
-    /** The request body a streamed-body request on this connection is reading, if any. */
     sink: BodySink | null;
-    /** Set once the connection opened with `tcp.open`: it is a `connect()` tunnel from then on. */
     tunnel: Tunnel | null;
   };
   const flush = (socket: Bun.Socket<SocketState>): void => {
@@ -2877,7 +2727,6 @@ export function listen(broker: Broker, hostname: string, port: number): BrokerSe
             const rest = buf.subarray(4 + len);
             state.chunks = rest.length ? [Buffer.from(rest)] : [];
             state.size = rest.length;
-            // A connect() socket: this connection carries its bytes from here on.
             const tcpHead = parseTcpOpen(payload);
             if (tcpHead) {
               state.chunks = [];
@@ -2885,12 +2734,10 @@ export function listen(broker: Broker, hostname: string, port: number): BrokerSe
               state.tunnel = broker.tcp.accept(socket, tcpHead, Buffer.from(rest));
               return;
             }
-            // A frame of a streamed request body: to its request's stream.
             if (payload.length > 0 && payload[0] === FRAME_V1_MORE) {
               state.sink?.frame(payload);
               continue;
             }
-            // A request whose body follows in frames: it runs while this loop feeds them.
             if (bodyStreamHead(payload)) {
               const sink = bodySink(socket);
               state.sink = sink;
@@ -2920,7 +2767,6 @@ export function listen(broker: Broker, hostname: string, port: number): BrokerSe
   return { port: server.port ?? port, stop: () => server.stop(true) };
 }
 
-/** Start the HTTP listener that serves short-lived direct R2 transfer tickets. */
 export function listenTransfers(broker: Broker, hostname: string, port: number): BrokerServer {
   const configured = Number(process.env.SB_R2_TRANSFER_MAX_BYTES);
   const maxRequestBodySize = Number.isSafeInteger(configured) && configured > 0 ? configured : 5 * 1024 * 1024 * 1024;

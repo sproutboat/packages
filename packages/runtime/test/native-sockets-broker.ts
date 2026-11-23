@@ -9,11 +9,8 @@ import { compileNative } from "./native-compile";
 import { createBroker, listen } from "../../wire/src/broker";
 import { EMPTY_BINDINGS, preludePath, TRANSPORT_MARKER, transportPath, wrapNativeFetchHandler } from "../src/wrap";
 
-// cloudflare:sockets connect() on the broker transport (compatibility date 2026-11-17): a
-// sprout built with the broker transport opens a second loopback connection to the broker per
-// socket, and the broker vets the address, connects, and terminates TLS. Local servers play the
-// origins: an echo, a server that answers once it sees the end of input, a STARTTLS server and a
-// TLS echo. The handler is what a driver does; measurements are printed at the end.
+// cloudflare:sockets connect() on the broker transport (compat 2026-11-17): the broker vets the address, connects and terminates TLS.
+// Local servers play the origins (echo, end-of-input, STARTTLS, TLS echo); measurements are printed at the end.
 const handler = `
 import { connect } from "cloudflare:sockets";
 const enc = new TextEncoder();
@@ -465,7 +462,6 @@ try {
   assert.equal(broker.tcp.open(), 0, "the broker cleans up when the sprout disconnects");
   console.log("a dead sprout's sockets are cleaned up in the broker");
 
-  // --- measurements
   sprout = await start(port, brokerServer.port);
   const latency = await get(`/latency-many?port=${echoPort}&n=200`);
   const rtt = await get(`/rtt?port=${echoPort}&n=2000`);

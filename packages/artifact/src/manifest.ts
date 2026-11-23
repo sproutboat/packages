@@ -5,12 +5,7 @@ export const CAPABILITY_PROFILE = "http-sync-v0";
 /** The only target a deployed artifact may carry. Every box runs linux-x86_64. */
 export const DEPLOY_TARGET = "linux-x86_64";
 
-/**
- * `<arch>-<platform>` of the machine doing the build, e.g. `arm64-darwin`.
- * Only `sproutboat build --target host` produces one (#62): it runs on this
- * machine for local dev and is deliberately not portable, so `validateManifest`
- * rejects it and neither `deploy` nor the control plane will accept it.
- */
+/** `<arch>-<platform>` of the build machine. Only `sproutboat build --target host` (#62) produces one and it is not portable: `validateManifest`, deploy and the control plane reject it. */
 export type HostTarget = `${string}-${string}`;
 export const hostTarget = (): HostTarget => `${process.arch}-${process.platform}`;
 
@@ -25,13 +20,8 @@ export type ArtifactManifest = {
   /** Build provenance, e.g. `zig-musl/0.16.0+porffor/a415d19+uws/360c276d`. */
   buildImage: string;
   /**
-   * The project's `compatibility_date`, as `YYYY-MM-DD`. Optional: artifacts
-   * built before this field existed have none, and every reader must treat that
-   * as the baseline (see `BASELINE_COMPATIBILITY_DATE` in `wrap.ts`). This is
-   * how a runtime behaviour change ships without breaking deployed apps — new
-   * builds opt in by moving their date, old binaries keep the old semantics —
-   * so it is deliberately *not* part of `schemaVersion`, which stays frozen
-   * at 2.
+   * The project's `compatibility_date` (YYYY-MM-DD). Optional: older artifacts have none and readers treat that as the baseline
+   * (`BASELINE_COMPATIBILITY_DATE`). Deliberately not part of `schemaVersion`, which stays frozen at 2.
    */
   compatibilityDate?: string;
   sourceHash: `sha256:${string}`;

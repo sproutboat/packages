@@ -1253,10 +1253,7 @@ test("resource-backed KV persists across brokers and is shared by id", async () 
   }
 });
 
-// #56 — object bytes live in their own file next to the store's own SQLite
-// file, not inside it, so a resource-bound bucket's blobs persist across a
-// redeploy exactly like its metadata does, and a bare-string binding's blobs
-// live beside its per-deployment db.
+// #56 - object bytes live in their own file next to the store's SQLite file, so a bucket's blobs persist across a redeploy like its metadata.
 test("R2 blobs are file-backed and persist across brokers for a resource-bound bucket", async () => {
   const root = mkdtempSync(join(tmpdir(), "sb-broker-r2-res-"));
   try {
@@ -1460,8 +1457,6 @@ test("listen(): framed request/reply over a real socket, delivered split", async
   }
 });
 
-// --- Durable Object alarms (#125) -------------------------------------------
-
 const doBindings = { do: [{ binding: "COUNTER", className: "Counter" }] };
 
 test("alarm: set, read back, and delete", async () => {
@@ -1531,8 +1526,6 @@ test("alarm: a failed delivery is retried, not lost", async () => {
   const pending = await b.dispatch({ op: "do.alarm.get", cls: "Counter", id: "a" });
   expect(pending.at).not.toBeNull();
 });
-
-// --- service bindings (#48) --------------------------------------------------
 
 const svcBindings = { services: [{ binding: "AUTH", service: "auth-api" }] };
 
@@ -1604,8 +1597,6 @@ test("service: a call reaches the edge on loopback, which plain fetch() may not"
   // ...while real egress to the same place is refused.
   await expect(b.dispatch({ op: "fetch", url: "http://127.0.0.1:8080/" })).rejects.toThrow("private or reserved");
 });
-
-// --- v1 frames (#63) --------------------------------------------------------
 
 /** Send one v1 frame over a real socket and return the decoded reply. */
 async function v1(

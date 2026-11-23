@@ -19,6 +19,7 @@
     "test:native-utf8": "bun packages/runtime/test/native-utf8.ts",
     "porffor-patches": "bun scripts/porffor-patches.ts",
     "lint": "oxlint .",
+    "check:comments": "bun scripts/check-comment-only.ts",
     "fmt": "oxfmt .",
     "fmt:check": "oxfmt --check .",
     "typecheck": "tsc --noEmit",

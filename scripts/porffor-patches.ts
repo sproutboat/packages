@@ -1,23 +1,8 @@
 #!/usr/bin/env bun
 /**
- * The Porffor patch series: `packages/toolchain/porffor-patches/*.patch`, a `git format-patch` series
- * against one pinned upstream commit, and the tool that turns it into the tarball the toolchain ships.
- *
- *   apply   [--dir D] [--base REF] [--upstream URL|PATH]   upstream commit + series (git am --3way) -> a git checkout
- *   export  [--dir D]                                      the checkout's commits -> porffor-patches/
- *   vendor  [--dir D] [--tag alpha-NN] [--out DIR]         the checkout -> vendor/porffor-patched.tar.gz + .json
- *   verify  [--upstream URL|PATH]                          apply + export + vendor into a temp dir, compare byte for byte
- *   check                                                  no git, no network: series hash and tarball sha256 vs the manifest
- *
- * The last patch of a series is generated (`Class: generated`): `compiler/builtins_precompiled.js`, which
- * upstream tracks and which has to follow every edit to a builtin. `apply` skips it and regenerates it
- * with `bun compiler/precompile.js`, so an upgrade never has to resolve a conflict in a 1.5 MB generated
- * file, and `verify` fails when the committed patch is not what the precompile produces.
- *
- * Everything that shapes the output is pinned: git runs with no user or system config and a fixed
- * identity, patches are written with `--zero-commit --no-signature --full-index`, and the tarball is a
- * ustar archive of the tracked files in path order with owner 0, mtime fixed, modes 0644/0755, gzipped
- * by `Bun.gzipSync` at level 9 (the same bun as CI's, see .github/workflows/ci.yml, gives the same bytes).
+ * The Porffor patch series (`packages/toolchain/porffor-patches/*.patch`, a `git format-patch` series on one pinned upstream commit) and the tool that
+ * builds the shipped tarball: apply | export | vendor | verify | check (see usage). The last patch is generated (`Class: generated`, builtins_precompiled.js):
+ * `apply` regenerates it and `verify` fails when the committed one drifts. Everything that shapes the output is pinned (git config, patch flags, ustar order and modes, gzip level 9).
  */
 import { createHash } from "node:crypto";
 import {
@@ -83,8 +68,6 @@ function isGenerated(patch: string): boolean {
   return /^Class: generated$/m.test(message);
 }
 
-// --- git, hermetic ---
-
 function gitEnv() {
   return {
     ...process.env,
@@ -112,8 +95,6 @@ function git(cwd: string, args: string[], allowFailure = false) {
 }
 
 const gitOut = (cwd: string, args: string[]) => git(cwd, args).out.trim();
-
-// --- apply ---
 
 export interface ApplyOptions {
   dir: string;
@@ -196,8 +177,6 @@ export function precompileCommit(dir: string, log: (line: string) => void = () =
   log("regenerated compiler/builtins_precompiled.js");
 }
 
-// --- export ---
-
 export function exportSeries(dir: string, out: string): string[] {
   const base = gitOut(dir, ["config", "sproutboat.base"]);
   if (!base) throw new Error(`${dir} was not made by \`apply\` (no sproutboat.base)`);
@@ -228,8 +207,6 @@ export function exportSeries(dir: string, out: string): string[] {
     rmSync(stage, { recursive: true, force: true });
   }
 }
-
-// --- the tarball ---
 
 function octal(value: number, width: number): string {
   return `${value.toString(8).padStart(width - 1, "0")}\0`;
@@ -335,8 +312,6 @@ export function vendorTree(dir: string, tag?: string): Vendored {
 
 export const manifestText = (manifest: Manifest) => `${JSON.stringify(manifest, null, 2)}\n`;
 
-// --- check and verify ---
-
 /** No git, no network: the committed series and tarball agree with the manifest. Returns the problems. */
 export function check(): string[] {
   const problems: string[] = [];
@@ -391,8 +366,6 @@ export function verify(upstream?: string, log: (line: string) => void = (line) =
   }
   return problems;
 }
-
-// --- command line ---
 
 function option(args: string[], name: string): string | undefined {
   const at = args.indexOf(name);

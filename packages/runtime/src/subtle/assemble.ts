@@ -1,16 +1,6 @@
-// Builds the C that crypto.subtle compiles into an embedded sprout: Monocypher (vendored verbatim in
-// vendor/) plus subtle.c, adapted for the one place it is compiled.
-//
-// Porffor splits inline C into a shared header and per-unit implementation files, and the splitter
-// is a small scanner, not a C parser. Three things follow, and this file handles each:
-//   - A comment that opens a top-level chunk makes the chunk look like a variable and breaks the
-//     split, so every comment is removed (the licence travels in vendor/ and the README).
-//   - A top-level non-const static function becomes a global symbol in its unit, so every file-scope
-//     name Monocypher declares static is aliased to a prefixed one by the preprocessor, for the span
-//     of the file. Its short typedef names (u8, fe) and macros (FOR, MIN) are aliased or undefined
-//     the same way, so none of them reaches the rest of the translation unit, which also holds
-//     Porffor's generated code and SQLite glue.
-//   - Preprocessor lines are copied to both halves in order, so the aliases hold on both sides.
+// Builds the C that crypto.subtle compiles into an embedded sprout: vendored Monocypher plus subtle.c. Porffor's inline-C splitter is a scanner, not
+// a C parser, so every comment is removed (a comment opening a top-level chunk breaks the split) and every file-scope static name, typedef and macro
+// Monocypher declares is aliased by the preprocessor so none reaches the rest of the unit; preprocessor lines are copied to both halves in order.
 import { readFileSync, writeFileSync } from "node:fs";
 
 const here = (name: string) => new URL(name, import.meta.url);
@@ -90,12 +80,8 @@ export function assembleSubtleC(): string {
   ].join("\n");
 }
 
-/**
- * One call into sbc_op. `op` is a decimal string; a, b, c, d are byte strings (latin1, one char per
- * byte). Returns a byte string whose first byte is the status (0 ok, 1 DataError, 2 OperationError,
- * 3 NotSupportedError) and whose rest is the result. Sits inside the markers so that pruning the
- * block (wrap.ts, for a handler that never touches crypto.subtle) removes it with the C it calls.
- */
+// One call into sbc_op: `op` is a decimal string, a..d are latin1 byte strings; returns a byte string whose first byte is the status (0 ok, 1 DataError,
+// 2 OperationError, 3 NotSupportedError). Inside the markers so pruning the block (wrap.ts) removes it with the C it calls.
 const SUBTLE_RAW = `// oxlint-disable-next-line no-unused-vars -- read inside the RawC block below, not by JS.
 function __sbSubtleRaw(op, a, b, c, d) {
   let out = "";

@@ -16,8 +16,31 @@ export default {
     "packages/toolchain/src/a21/standalone-server/*.js",
     "packages/toolchain/src/a21/standalone-server/*.cpp",
   ],
-  jsPlugins: [{ name: "anti-slop", specifier: "./tools/oxlint/anti-slop/index.ts" }],
+  jsPlugins: [
+    { name: "anti-slop", specifier: "./tools/oxlint/anti-slop/index.ts" },
+    { name: "sproutboat", specifier: "./.oxlint/sproutboat/index.ts" },
+  ],
+  // Files whose bytes feed the generation fingerprint or are embedded in compiled apps keep their comments as they are:
+  // changing one changes a build identity. Trim them in a change that bumps the fingerprint on purpose.
+  overrides: [
+    {
+      files: [
+        "packages/toolchain/src/a21/standalone.ts",
+        "packages/toolchain/src/a21/standalone-shim.ts",
+        "packages/toolchain/src/a21/standalone-build.ts",
+        "packages/toolchain/src/a21/standalone-dispatch.js",
+        "packages/toolchain/src/a21/standalone-preamble.js",
+        "packages/runtime/src/native-fetch-prelude.js",
+        "packages/runtime/src/transport-embedded.js",
+        "packages/runtime/src/transport-broker.js",
+        "packages/runtime/src/streams-entry.js",
+        "packages/runtime/src/egress.ts",
+      ],
+      rules: { "sproutboat/max-comment-lines": "off" },
+    },
+  ],
   rules: {
+    "sproutboat/max-comment-lines": "error",
     "anti-slop/no-chained-type-assertions": "error",
     "anti-slop/no-conditional-empty-object-spread": "error",
     "anti-slop/no-known-value-widening": "error",

@@ -1,7 +1,5 @@
-// #179 — an uncaught handler exception must turn into a 500 (or, for
-// scheduled/queue/alarm, a swallowed failure), never a process-crashing
-// throw/rejection out of __sbEntry. Same lift-the-prelude-and-eval approach
-// as client-ip.test.js: the prelude is prepended as text and cannot import.
+// #179 - an uncaught handler exception must become a 500 (or a swallowed failure for scheduled/queue/alarm), never a crash out of __sbEntry.
+// Lifts the prelude and evals it, as client-ip.test.js does.
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

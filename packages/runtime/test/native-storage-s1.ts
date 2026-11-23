@@ -5,11 +5,8 @@ import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { restore } from "./ltx-restore.ts";
 
-// Design 029 stage S1, on the exact inline C of the embedded transport: the one-owner lock, capture of every kind of
-// file (D1, store.sqlite, Durable Object SQL) into a spool root shared with a shipper group, LTXPOS3 and epochSeq,
-// the dirty list, and a captured handle leaving the table and coming back. Both native regions are compiled
-// together, as native-db-table.ts does, and a driver takes one command per line (the table is process-global).
-// SB_TEST_SQLITE_DIR=DIR (sqlite3.h and a built sqlite3.o) runs it against the host's amalgamation instead.
+// Design 029 stage S1 on the embedded transport's exact inline C: the one-owner lock, capture of D1, store.sqlite and Durable
+// Object SQL into a spool root, LTXPOS3 and epochSeq, the dirty list. SB_TEST_SQLITE_DIR=DIR runs it against the host's amalgamation.
 const transport = await readFile(new URL("../src/transport-embedded.js", import.meta.url), "utf8");
 const ltxStart = transport.indexOf("// BEGIN LTX NATIVE"),
   ltxEnd = transport.indexOf("// END LTX NATIVE", ltxStart);

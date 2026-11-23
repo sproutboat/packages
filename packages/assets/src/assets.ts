@@ -1,10 +1,4 @@
-/**
- * Static-asset manifest. `sproutboat build` copies the project's `assets`
- * directory next to the artifact and writes `assets.json` (this manifest); the
- * edge serves matching files directly (assets-first, like Cloudflare), and the
- * broker's `assets.get` op backs `env.<ASSETS>.fetch(request)` for the paths
- * the sprout chooses to serve itself.
- */
+/** Static-asset manifest: `sproutboat build` writes `assets.json`; the edge serves matching files first, and the broker's `assets.get` backs `env.<ASSETS>.fetch`. */
 import { createHash } from "node:crypto";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, posix } from "node:path";
@@ -60,13 +54,8 @@ export function contentType(name: string): string {
 }
 
 /**
- * Resolve a request path to a manifest key the way a static host does:
- *   - an exact hit wins;
- *   - a directory path (`/docs/`) tries `/docs/index.html`;
- *   - an extensionless path (`/docs`) tries `/docs.html`, then `/docs/index.html`.
- * Returns the matched key, or `null`. This only picks which file to serve — no
- * canonical redirects, and the caller still owns not-found handling. Mirrors
- * Cloudflare's `html_handling: "auto-trailing-slash"` minus the 3xx responses.
+ * Resolve a request path to a manifest key like a static host: an exact hit, a directory (`/docs/` -> `index.html`), an extensionless path
+ * (`/docs.html`, then `/docs/index.html`). Mirrors Cloudflare's `auto-trailing-slash` minus the 3xx responses.
  */
 export function resolveAssetKey(path: string, has: (key: string) => boolean): string | null {
   if (!path.startsWith("/")) path = `/${path}`;
@@ -169,12 +158,7 @@ export function parseHeaders(text: string): HeaderRule[] {
   return rules;
 }
 
-/**
- * `_headers` patterns follow Netlify/Pages semantics, not `globMatch`'s
- * (`run_sprout_first` deliberately keeps a bare `*` inside one segment) — a
- * trailing `*` here is greedy across `/`, so `/assets/*` catches
- * `/assets/deeply/nested.js` the way a real `_headers` file expects.
- */
+// `_headers` patterns follow Netlify/Pages semantics: a trailing `*` is greedy across `/` (`/assets/*` catches nested files), unlike globMatch's.
 function headerPatternMatches(pattern: string, pathname: string): boolean {
   const patternSegments = pattern.split("/").filter(Boolean);
   const pathSegments = pathname.split("/").filter(Boolean);
@@ -190,12 +174,7 @@ export function matchHeaders(rules: readonly HeaderRule[], pathname: string): He
   return rules.filter((rule) => headerPatternMatches(rule.pattern, pathname));
 }
 
-/**
- * Parse a Pages/Netlify-style `_redirects` file: `from  to  [status]` per
- * line, whitespace-separated. `status` must be a 3xx (defaults to 302 when
- * omitted); anything else is dropped as malformed rather than silently
- * treated as a rewrite.
- */
+// `status` must be a 3xx (default 302); anything else is dropped as malformed rather than treated as a rewrite.
 export function parseRedirects(text: string): RedirectRule[] {
   const rules: RedirectRule[] = [];
   for (const rawLine of text.split("\n")) {
@@ -213,17 +192,8 @@ export function parseRedirects(text: string): RedirectRule[] {
 }
 
 /**
- * Cloudflare's `_redirects` matching (workers-sdk, `asset-worker/src/utils/rules-engine.ts`), on the request pathname:
- *
- *   - the whole pathname must match, so a trailing slash is significant: `/compare` does not match `/compare/`, and
- *     `/compare /compare/ 308` is one hop, not a loop;
- *   - `:name` matches one or more characters up to the next `/` (letters, digits and `_` after a letter name it);
- *     a name may appear once per rule;
- *   - `*` matches anything, including `/` and nothing, and is `:splat` in `to`; a rule has at most one;
- *   - a rule that breaks those limits never matches (Cloudflare drops it).
- *
- * A rule with no `:name` and no `*` is static: a static rule beats a dynamic one whatever the order (`findRedirect`);
- * among rules of one kind the first in the file wins.
+ * Cloudflare's `_redirects` matching (workers-sdk rules-engine): the whole pathname must match (`/compare` does not match `/compare/`); `:name` is one
+ * or more characters up to `/`, `*` is anything and `:splat` in `to`; a rule breaking those limits never matches. A static rule beats a dynamic one, then first wins.
  */
 type RedirectToken = { kind: "text"; text: string } | { kind: "name"; name: string } | { kind: "splat" };
 

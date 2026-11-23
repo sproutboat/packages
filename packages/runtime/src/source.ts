@@ -2,10 +2,8 @@ import { hasEntryHandler, inlineWorkersImports, neutraliseExports } from "./wrap
 
 export type SourceValidation = { ok: true } | { ok: false; errors: string[] };
 
-// Checked against the *bundled* module (#89), not the entry file: after
-// bundling there are no imports left to reject, and a dependency reaching for a
-// Node API has to fail exactly as hand-written code would. A bare specifier
-// that resolves to nothing never gets this far — the bundler fails first.
+// Checked against the *bundled* module (#89): after bundling no imports are left to reject, and a dependency reaching for a Node API must fail as hand-written code
+// would. A bare specifier that resolves to nothing never gets this far: the bundler fails first.
 const NODE_GLOBAL_USE = /\b(process|Bun|Deno|Buffer)\.[a-zA-Z_$]|\bnew\s+Buffer\s*\(/;
 
 /**
@@ -20,15 +18,9 @@ const alwaysForbidden: Array<[RegExp, string]> = [
   [/\bimport\s*\(/, "dynamic import() is not supported: nothing can resolve it at build time"],
   [/\brequire\s*\(/, "CommonJS require is not supported"],
   [/\bXMLHttpRequest\s*\(/, "XMLHttpRequest is not supported"],
-  // baronunread/sproutboat#132 — a bare identifier match flags a *local*
-  // `function process()` as readily as the global: zod v4 declares exactly
-  // that (its internal `process(schema, ctx)`), so importing zod alone used
-  // to fail this check pointing at code the handler author never wrote. A
-  // Node/Bun/Deno API is always reached through a member access or `new`;
-  // requiring that shape lets a local binding of the same name through.
-  // No whitespace is allowed around the `.`: real member access never has
-  // any (`process.env`, always contiguous), while prose mentioning the word
-  // does (a bundled comment ending "...unique to this process. The id...").
+  // baronunread/sproutboat#132 - a bare identifier match flags a *local* `function process()` as readily as the global (zod v4 declares one). A Node/Bun/Deno API is
+  // always reached through a member access or `new`; requiring that shape lets a local binding through. No whitespace around the `.`: real member access is contiguous,
+  // prose mentioning the word is not ("...unique to this process. The id...").
   [NODE_GLOBAL_USE, "Node, Bun, and Deno APIs are not supported"],
   // `node:` only means something as an import specifier, so only one in import
   // position counts (NODE_SPECIFIER); a bare substring match flagged Effect, whose bundle
@@ -37,11 +29,8 @@ const alwaysForbidden: Array<[RegExp, string]> = [
 ];
 
 /**
- * From this compatibility date the Node/Bun/Deno global check skips a use that sits behind a
- * `typeof X` feature test (supabase-js, @neondatabase/serverless and many others carry a Node or
- * Deno branch next to the Web one), a global the bundle declares itself (a bundled `buffer`
- * polyfill) and one that only appears inside a string or comment. Earlier
- * dates keep the plain pattern match. Proposed value, to be chosen by a maintainer.
+ * From this date the Node/Bun/Deno global check skips a use behind a `typeof X` feature test (supabase-js, @neondatabase/serverless), a global the bundle declares
+ * itself and one inside a string or comment; earlier dates keep the plain pattern match. Proposed value, to be chosen by a maintainer.
  */
 export const GUARDED_GLOBALS_DATE = "2026-11-15";
 
@@ -87,14 +76,9 @@ export function validateHttpSyncSource(module: string, compatibilityDate?: strin
   // into globals the same way (see inlineWorkersImports).
   const source = inlineWorkersImports(module);
   const errors: string[] = [];
-  // The default export must be an object literal with a `fetch` method. A module
-  // may also declare Durable Object classes / helpers before it, so this is not
-  // anchored to the start of the file.
-  // A hand-written file exports inline; a bundled one re-exports at the end.
-  // `neutraliseExports` is the same reader the compiler uses, so `check` cannot
-  // accept a module the build would then reject.
-  // A WorkerEntrypoint may serve only RPC, and a Worker only scheduled() or queue() (a cron
-  // or queue consumer), with no fetch() at all, as in workerd.
+  // The default export must be an object literal with a `fetch` method, not anchored to the start (Durable Object classes and helpers may precede it).
+  // `neutraliseExports` is the compiler's own reader, so `check` cannot accept a module the build would reject. A WorkerEntrypoint may serve only RPC, and a
+  // Worker only scheduled() or queue(), with no fetch(), as in workerd.
   if (neutraliseExports(source) === null || !hasEntryHandler(source)) {
     errors.push(
       "handler must default-export an object with fetch(request), scheduled() or queue(), or a WorkerEntrypoint class",

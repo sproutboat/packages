@@ -3,10 +3,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-// Outbound WebSockets, from compatibility date 2026-11-01: new WebSocket(url) and fetch() with
-// Upgrade: websocket, on the embedded transport (standalone sprouts, sproutd). An upstream
-// server in this process (Bun) answers them; the handler's answers are what workerd gives for
-// the same code.
+// Outbound WebSockets (compat 2026-11-01): new WebSocket(url) and fetch() with Upgrade: websocket on the embedded
+// transport, against an upstream Bun server in this process; the handler's answers are what workerd gives.
 interface UpstreamData {
   readonly path: string;
 }

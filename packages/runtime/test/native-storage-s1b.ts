@@ -6,10 +6,8 @@ import { Database } from "bun:sqlite";
 import { restore } from "./ltx-restore.ts";
 import { buildDriver, spawnDriver, type Driver } from "./s1b-driver.ts";
 
-// Design 029 stage S1b on the exact inline C of the embedded transport: the capture's write path after the fsync
-// redesign (one WAL sync per commit; LTX files, directory entries and the position record synced only before a clean
-// record; checkpoint by size or time, not after every statement) and group commit (a commit's WAL sync owed until one
-// flush, captures merged). The power-loss and SIGKILL campaigns are native-storage-s1b-crash.ts.
+// Design 029 stage S1b on the embedded transport's exact inline C: the capture's write path after the fsync redesign (one WAL sync per commit,
+// the rest synced only before a clean record) and group commit. The power-loss and SIGKILL campaigns are native-storage-s1b-crash.ts.
 const work = await mkdtemp(join(tmpdir(), "sb-native-s1b-"));
 const binary = await buildDriver(work);
 const spawn = (dir: string, env: Record<string, string> = {}) => spawnDriver(binary, dir, env);

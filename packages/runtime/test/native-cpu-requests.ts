@@ -5,10 +5,8 @@ import { join } from "node:path";
 import { compileNative } from "./native-compile";
 import { preludePath, TRANSPORT_MARKER, transportPath, wrapNativeFetchHandler } from "../src/wrap";
 
-// Per-request CPU (design 02): x-sb-cpu-ms counts the thread CPU time of the slices in which one
-// request ran. A spinner interleaved with requests that wait is charged for its own work, the
-// waiters for theirs, whatever order they run in. An async handler reports it from compatibility
-// date 2026-11-02; before that only a handler that answers synchronously does.
+// Per-request CPU (design 02): x-sb-cpu-ms counts the thread CPU time of the slices in which one request ran, so a spinner and waiters are each charged for their
+// own work. An async handler reports it from compat 2026-11-02; before that only a synchronous one does.
 const handler = `export default {async fetch(request) {
   const url = new URL(request.url);
   const ms = Number(url.searchParams.get("ms") || 0);

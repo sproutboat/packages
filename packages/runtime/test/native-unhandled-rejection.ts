@@ -5,10 +5,8 @@ import { join } from "node:path";
 import { compileNative } from "./native-compile";
 import { preludePath, TRANSPORT_MARKER, transportPath, wrapNativeFetchHandler } from "../src/wrap";
 
-// A promise that rejects with nobody waiting on it (a binding call that failed and was never
-// awaited, say a D1 run() that broke a foreign key) must not take the process down, whatever
-// the compatibility date. As on Workers it is logged, an "unhandledrejection" listener hears
-// it, and the next request is served.
+// A promise that rejects with nobody waiting (a binding call never awaited) must not take the process down, whatever the compat date: as on
+// Workers it is logged, an "unhandledrejection" listener hears it, and the next request is served.
 const handler = `addEventListener("unhandledrejection", (event) => {
   globalThis.__heard = (globalThis.__heard || []).concat(String(event.reason && event.reason.message));
 });

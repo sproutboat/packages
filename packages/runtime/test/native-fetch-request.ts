@@ -6,12 +6,8 @@ import { compileNative } from "./native-compile";
 import { createBroker, listen } from "../../wire/src/broker";
 import { EMPTY_BINDINGS, preludePath, TRANSPORT_MARKER, transportPath, wrapNativeFetchHandler } from "../src/wrap";
 
-// fetch(Request), fetch(Request, init) and new Request(request, init) on a compiled sprout,
-// through the broker transport, against what workerd does (the platform's
-// tests/service-bindings suite holds workerd's answers). The same handler is compiled at
-// compatibility date 2026-10-23, where Request follows Fetch as workerd does, and at
-// 2026-10-22, where an app keeps the older behaviour: a copied Request shares its body,
-// headers stay mutable and any method name passes.
+// fetch(Request[, init]) and new Request(request, init) on a compiled sprout via the broker transport, against workerd. Compiled at compat
+// 2026-10-23 (Request follows Fetch) and 2026-10-22 (copied Request shares its body, headers mutable, any method passes).
 const handler = `
 const textStream = (...parts) =>
   new ReadableStream({

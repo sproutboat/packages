@@ -5,11 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { restore } from "./ltx-restore.ts";
 
-// Storage stage S1 on a COMPILED standalone binary (the same inline C as in sproutd's workers, built by the CLI): the owner lock and
-// capture of D1, store.sqlite and Durable Object SQL through idle eviction and SIGKILL, restored from the spool and compared with the
-// databases, and a second process on the same data refused and then served once the first is gone. native-storage-s1.ts runs the
-// same C without the compiler; this one proves the compiled program keeps to it. Needs SB_CLI, a sproutboat-cli checkout linked to
-// this one (it builds the sprout), as native-do-evict.ts does.
+// Storage stage S1 on a COMPILED standalone binary: the owner lock and capture of D1, store.sqlite and Durable Object SQL through idle eviction and
+// SIGKILL, restored from the spool and compared; a second process on the same data is refused. native-storage-s1.ts runs the same C without the
+// compiler. Needs SB_CLI, a sproutboat-cli checkout linked to this one.
 const cli = process.env.SB_CLI;
 if (!cli) {
   console.log("skipped: set SB_CLI to a sproutboat-cli checkout linked to this checkout (it builds the sprout)");

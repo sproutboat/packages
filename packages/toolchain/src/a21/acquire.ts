@@ -1,9 +1,6 @@
 /**
- * `ensurePorfforA21(channel)`: acquire the Porffor compiler tree. Takes the vendored PATCHED tarball (`vendor/porffor-patched.tar.gz`: upstream's pinned commit with the
- * series in `porffor-patches/` applied, `scripts/porffor-patches.ts vendor`), verifies its sha256 against the
- * manifest, extracts it and publishes the tree atomically under the toolchain cache, keyed by commit and by
- * the series hash. Nothing is patched here: no git, no bun and no network on the user's machine.
- * Used by sproutd's standalone channel and the CLI's standalone builds, which need the same cached shape.
+ * `ensurePorfforA21(channel)`: unpack the vendored PATCHED Porffor tarball (sha256 checked against the manifest) and publish it atomically under the
+ * toolchain cache, keyed by commit and series hash. Nothing is patched here: no git, bun or network on the user's machine.
  */
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";

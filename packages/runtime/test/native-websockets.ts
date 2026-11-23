@@ -5,10 +5,8 @@ import { join } from "node:path";
 import { compileNative } from "./native-compile";
 import { preludePath, TRANSPORT_MARKER, transportPath, wrapNativeFetchHandler } from "../src/wrap";
 
-// WebSockets from compatibility date 2026-10-30: a WebSocketPair whose ends both stay in
-// the worker is plain JavaScript and works on every host; a 101 response needs a host that
-// carries client sockets (sproutd), so a standalone sprout answers it with a 501. Before the
-// date nothing is defined. The answers below are workerd's (1.20260730.1) for the same code.
+// WebSockets from compat 2026-10-30: a WebSocketPair with both ends in the worker works everywhere; a 101 response needs
+// a host that carries client sockets (sproutd), so a standalone sprout answers 501. The answers are workerd's (1.20260730.1).
 const handler = `const closes = [];
 export default {async fetch(request) {
   const path = new URL(request.url).pathname;

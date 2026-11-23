@@ -1,10 +1,5 @@
-// #60 — the FormData parsing helpers live inline in native-fetch-prelude.js
-// (the prelude is prepended as text and cannot import), so this test lifts
-// that block out and exercises it directly. Bun already provides real
-// FormData/Blob/URLSearchParams globals, so the lifted parser functions run
-// against those rather than the prelude's own guarded shims (which no-op
-// here since Bun already has the globals they'd otherwise install) — the
-// parsing logic itself is what's under test, and it's spec surface either way.
+// #60 - the prelude is prepended as text and cannot import, so this lifts the FormData parsing block out and runs it against Bun's real
+// FormData/Blob/URLSearchParams (the prelude's guarded shims no-op there); the parsing logic is what is under test.
 import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";

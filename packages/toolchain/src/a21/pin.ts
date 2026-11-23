@@ -1,14 +1,7 @@
 /**
- * The Porffor pin. The toolchain supports ONE alpha at a time: `CURRENT_ALPHA`. (The standalone server's own
- * sources, the uWebSockets shim and the web classes, are vendored in `standalone-server/`, not taken from a tree.)
- *
- * What the pin names is the patched tree. `vendor/porffor-patched.tar.gz` is upstream's `commit` with the
- * series in `porffor-patches/` applied (`scripts/porffor-patches.ts`), and `vendor/porffor-patched.json`
- * records the upstream commit, the series hash and the tarball's sha256. Nothing is patched on the
- * user's machine: `acquire.ts` verifies the tarball against that sha256 and unpacks it.
- *
- * To move to a new alpha: "Upgrading to a new alpha" in PATCHES.md. This file then needs only
- * `CURRENT_ALPHA` and the npm version in the manifest.
+ * The Porffor pin (one alpha at a time: `CURRENT_ALPHA`). It names the patched tree: `vendor/porffor-patched.tar.gz` is upstream's commit with
+ * `porffor-patches/` applied, `vendor/porffor-patched.json` records the commit, series hash and tarball sha256. To move to a new alpha:
+ * "Upgrading to a new alpha" in PATCHES.md.
  */
 import manifest from "../../vendor/porffor-patched.json" with { type: "json" };
 
@@ -60,10 +53,5 @@ export function porfforA21Version(channel: PorfforA21Channel = CURRENT_ALPHA): s
   return `${p.channel} (${p.commit})`;
 }
 
-/**
- * The feature level of the compiler's refusal of its own intrinsics in compiled app code (series patch 0026,
- * `compiler/refuse.js`): `Porffor`, `__Porffor_*` and `__<Builtin>_*` named by a module that is not the entry, the runtime or
- * the shared prelude, or by an `eval`, `Function` or `vm` source, fail the compile with `SB_INPUT_REFUSED`. A build host
- * records the level of the tree it ships; a test checks this number against the shipped tree's `REFUSAL_LEVEL`.
- */
+/** Feature level of the compiler's refusal of its own intrinsics in app code (patch 0026); a test checks it against the shipped tree's `REFUSAL_LEVEL`. */
 export const INTRINSIC_REFUSAL = 1;

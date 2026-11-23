@@ -8,18 +8,9 @@ import bridgeSource from "../../toolchain/src/a21/native-fetch-a22.c" with { typ
 import { renderStandaloneUnits } from "./native-compile";
 import { preludePath, TRANSPORT_MARKER, transportPath, wrapNativeFetchHandler } from "../src/wrap";
 
-// The calling convention of every call between host C (the bridge) and generated code, on Porffor alpha 23 and later.
-// Alpha 23 prefixes each generated JS function with PORF_CC, which is `__attribute__((swiftcall))` on clang
-// arm64 and nothing elsewhere. A host C file that declares or calls one of those functions without PORF_CC
-// compiles and links, and works until link-time optimisation sees the two sides disagree and turns the call
-// into `unreachable`: the macOS arm64 binary trapped at startup (SIGTRAP in main) calling p__main__23main.
-// The reverse direction matters as much: functions the host defines for generated code to call (the
-// timer and response entry points) are plain C, and must stay so.
-//
-// Every unit of a rendered standalone build, and the bridge, is compiled to LLVM IR for each arm64 and x86-64
-// target a clang-based compiler here can reach, and every function the IR defines, declares or calls must carry
-// swiftcc exactly when its source declaration has PORF_CC (and the target is arm64). Needs clang or zig;
-// without one, the test is skipped, and on CI (CI is set) that is an error.
+// The calling convention between host C (the bridge) and generated code, Porffor alpha 23+: generated JS functions carry PORF_CC
+// (`swiftcall` on clang arm64). A host C file that calls one without it links fine until LTO sees the mismatch and emits `unreachable`
+// (the macOS arm64 binary trapped at startup). Every rendered unit and the bridge compile to LLVM IR per target; skipped without clang or zig, an error on CI.
 const handler = `export default { fetch() { return new Response("hello"); } };`;
 
 type Target = { name: string; triple: string; arm64: boolean };

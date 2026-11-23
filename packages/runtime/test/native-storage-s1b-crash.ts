@@ -8,17 +8,9 @@ import { restore } from "./ltx-restore.ts";
 import { buildDriver, spawnDriver, type Driver } from "./s1b-driver.ts";
 import { Disk, parseTrace, type Op } from "./plsim.ts";
 
-// Design 029 stage S1b: the crash campaign for the capture's new write path (no per-commit fsync of capture files, W
-// records never synced, checkpoint by size or time, group commit). Two parts:
-//
-//  1. Power loss (Linux with strace). A real run is traced; for a power cut after (nearly) every syscall of it the disk a
-//     cut would leave is rebuilt (plsim.ts: strict, and torn with a seed) and the real code recovers from it. At every point:
-//     the database passes integrity_check; every row the run had acknowledged is in it (a "sql" reply, or the "flush"
-//     reply that releases held "sqld" commits); and, after the recovered handle closes cleanly, the spool's chain restores
-//     byte for byte to the database. Recovery may start a new epoch (a base image); it may never lose or invent a row.
-//  2. SIGKILL (everywhere). Many rounds of random mixes of inline and held commits, killed at random times: the same checks
-//     (a plain kill keeps the page cache, so this is the process-death half of the promise).
-// SB_S1B_POINTS caps the power-cut points per scenario (default 600; the campaign of the report used 4000).
+// Design 029 stage S1b: the crash campaign for the capture's write path. 1. Power loss (Linux, strace): a cut after nearly every syscall is rebuilt
+//  (plsim.ts, strict and torn with a seed) and the real code recovers; every acknowledged row must be present, integrity_check must pass and the spool must restore
+//  byte for byte (a new epoch is fine, a lost or invented row is not). 2. SIGKILL (everywhere): random mixes of inline and held commits. SB_S1B_POINTS caps the cut points (default 600).
 const work = await mkdtemp(join(tmpdir(), "sb-native-s1b-crash-"));
 const binary = await buildDriver(work);
 const maxPoints = Number(process.env.SB_S1B_POINTS ?? 600);
@@ -38,7 +30,6 @@ const SCHEMA = [
   "sql store x CREATE TABLE kv(id INTEGER PRIMARY KEY, v TEXT)",
 ];
 
-// ---- what a recovered tree must satisfy ----
 type Acked = { d1: Set<string>; store: Set<string> };
 function values(file: string, sql: string): string[] {
   const db = new Database(file, { readonly: true });
@@ -96,7 +87,6 @@ async function recoverAndCheck(img: string, acked: Acked, label: string, have: {
   }
 }
 
-// ---- part 1: power loss ----
 const strace = Bun.spawnSync(["sh", "-c", "command -v strace"]);
 const haveStrace = process.platform === "linux" && strace.exitCode === 0;
 const traceCalls =
@@ -384,7 +374,6 @@ try {
     console.log("skipped part 1 (power loss): needs Linux and strace");
   }
 
-  // ---- part 2: SIGKILL rounds, random mixes of inline and held commits ----
   {
     recovered = { resume: 0, fresh: 0, cheap: 0, full: 0 };
     const dir = await mkdtemp(join(work, "kill-"));

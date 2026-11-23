@@ -5,10 +5,8 @@ import { join } from "node:path";
 import { compileNative } from "./native-compile";
 import { preludePath, TRANSPORT_MARKER, transportPath, wrapNativeFetchHandler } from "../src/wrap";
 
-// JSON.stringify of strings as the spec defines it (Bun is the reference): quotes and backslash,
-// every control character, U+2028 and U+2029 (not escaped), DEL, Latin-1 and wider text, astral
-// characters, and lone or misordered surrogates (escaped as \\udXXX). Each input is built from
-// code units in the handler, so the compiled string has whatever layout concatenation gives it.
+// JSON.stringify of strings as the spec defines it (Bun is the reference): control characters, U+2028/9 (not escaped), DEL, astral characters and
+// lone surrogates (escaped). Inputs are built from code units in the handler so the compiled string has the layout concatenation gives it.
 const units = (s: string) => Array.from({ length: s.length }, (_, i) => s.charCodeAt(i));
 const everyControl = Array.from({ length: 0x20 }, (_, i) => String.fromCharCode(i)).join("");
 const INPUTS: string[] = [

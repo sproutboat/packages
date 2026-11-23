@@ -1,39 +1,30 @@
 const slugPattern = /^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])?$/;
 
 /**
- * A storage binding entry (#74). Either a bare `"BINDING"` — resolved to an
- * ephemeral local resource for `sproutboat dev`, rejected by a real deploy — or
- * `{ binding, id }` pointing at an account-level resource created with
- * `sproutboat <kv|d1|r2|queues> create`. The id carries its own `<kind>_` prefix.
+ * A storage binding entry (#74): a bare `"BINDING"` (an ephemeral local resource for `sproutboat dev`, rejected by a
+ * real deploy) or `{ binding, id }` for an account-level resource; the id carries its own `<kind>_` prefix.
  */
 export type ResourceBinding = { binding: string; id: string };
 export type ResourceRef = string | ResourceBinding;
 
 /**
- * A queue binding with its queue's name and consumer settings, named as in
- * wrangler's `queues.consumers`. The worker consumes every queue it binds (with a
- * `queue()` handler), so the settings sit on the binding. `queue` is the name
- * `batch.queue` reports and `dead_letter_queue` refers to; it defaults to the
- * binding name. `id` is optional here, unlike the other storage bindings.
+ * A queue binding with its queue's name and consumer settings, named as in wrangler's `queues.consumers`. `queue` is what
+ * `batch.queue` reports and `dead_letter_queue` refers to (default: the binding name); `id` is optional here.
  */
 export type QueueBinding = {
   binding: string;
   id?: string;
   queue?: string;
-  /** Messages per batch, 1 to 100 (default 10). */
   max_batch_size?: number;
-  /** Seconds a batch waits to fill, 0 to 60 (default 0: delivered at once). */
   max_batch_timeout?: number;
   /** Retries before the message goes to the dead letter queue or is dropped, 0 to 100 (default 3). */
   max_retries?: number;
   /** Seconds before a retried message is delivered again, 0 to 86400 (default 0). */
   retry_delay?: number;
-  /** The queue (by name) that receives messages out of retries. */
   dead_letter_queue?: string;
 };
 export type QueueRef = string | QueueBinding;
 
-/** Normalizes a storage-binding array to `{ binding, id? }` rows. */
 export function resourceRefs(
   field: readonly (string | { binding: string; id?: string })[] | undefined,
 ): Array<{ binding: string; id?: string }> {
@@ -46,11 +37,6 @@ export function resourceRefs(
   );
 }
 
-/**
- * The queues a config binds, each with its queue name (the binding name when unset) and
- * its consumer settings in camelCase; settings left unset are absent. This is what the
- * build bakes into the artifact as `bindings.queueConfig`.
- */
 export type QueueSettings = {
   binding: string;
   queue: string;
@@ -74,20 +60,14 @@ export function queueSettings(field: readonly QueueRef[] | undefined): QueueSett
 }
 
 /**
- * Rewrite a bare `"BINDING"` token inside `<field>: [ … ]` to
- * `{ "binding": "BINDING", "id": "<id>" }`, leaving the rest of the source
- * (comments, spacing) untouched — used by `deploy`'s auto-provisioner to pin an
- * id back into `sproutboat.jsonc`. Binding names are UPPER_SNAKE, so a plain
- * `"BINDING"` match inside the array is unambiguous. No-op if not found.
+ * Rewrite a bare `"BINDING"` inside `<field>: [ … ]` to `{ "binding", "id" }`, leaving comments and spacing alone
+ * (deploy's auto-provisioner pins an id back into `sproutboat.jsonc`). No-op if not found.
  */
 export function pinBindingId(source: string, field: string, binding: string, id: string): string {
   const array = new RegExp(`("${field}"\\s*:\\s*\\[)([\\s\\S]*?)(\\])`);
-  // the bare token must be a whole array element — at the start of the array or
-  // right after a comma — never `"binding": "NAME"` inside an already-pinned
-  // { … } object.
+  // the bare token must be a whole array element, never `"binding": "NAME"` inside an already-pinned object.
   const element = new RegExp(`(^\\s*|,\\s*)"${binding}"(\\s*,|\\s*$)`);
-  // A queue may also be `{ "binding": "NAME", ...settings }` with no id: the id goes
-  // first in that object. The objects are flat, so `{[^{}]*}` is one whole entry.
+  // A queue may be `{ "binding": "NAME", ...settings }` with no id: the id goes first. The objects are flat.
   const object = new RegExp(`\\{(?![^{}]*"id"\\s*:)([^{}]*"binding"\\s*:\\s*"${binding}"[^{}]*)\\}`);
   return source.replace(array, (whole, open: string, inner: string, close: string) =>
     element.test(inner)
@@ -104,13 +84,9 @@ export type SproutboatConfig = {
   main: string;
   compatibility_date: string;
   vars?: Record<string, string>;
-  /** KV namespace bindings, exposed as `env.<NAME>`. */
   kv_namespaces?: ResourceRef[];
-  /** Secret binding names, exposed as `env.<NAME>` (value fetched at use). */
   secrets?: string[];
-  /** D1 (SQLite) database bindings, exposed as `env.<NAME>`. */
   d1_databases?: ResourceRef[];
-  /** R2 (object storage) bucket bindings, exposed as `env.<NAME>`. */
   r2_buckets?: ResourceRef[];
   /** Queue producer bindings, exposed as `env.<NAME>.send()`. A `queue(batch)` handler consumes them. */
   queues?: QueueRef[];
@@ -118,12 +94,10 @@ export type SproutboatConfig = {
   analytics_engine_datasets?: string[];
   /** Durable Object bindings: `{ BINDING_NAME: "ClassName" }`. The class is defined in the handler module. */
   durable_objects?: Record<string, string>;
-  /** #48 — worker-to-worker calls: `env.<BINDING>.fetch(request)` reaches another
-   *  project on this control plane, resolved to its hostname at activation. */
+  /** #48 - `env.<BINDING>.fetch(request)` reaches another project on this control plane, resolved at activation. */
   services?: Array<{ binding: string; service: string }>;
   /** Scheduled triggers, e.g. `{ "crons": ["0 3 * * *"] }` — a `scheduled(event)` handler runs on each tick. */
   triggers?: { crons?: string[] };
-  /** Rate-limiter bindings (#69), exposed as `env.<BINDING>.limit({ key }) -> { success }`. */
   ratelimiters?: RateLimiterConfig[];
   /** Static assets: a directory served edge-first (like Cloudflare), optionally bound as `env.<BINDING>.fetch(request)`. */
   assets?: AssetsConfig;
@@ -131,13 +105,10 @@ export type SproutboatConfig = {
   version_metadata?: string;
 };
 
-/** One named fixed-window rate limiter: at most `limit` calls per `period` seconds, per key. */
 export type RateLimiterConfig = { binding: string; limit: number; period: number };
 
 export type AssetsConfig = {
-  /** Project-relative directory of files to publish with the artifact. */
   directory: string;
-  /** Optional binding name for `env.<BINDING>.fetch(request)`. */
   binding?: string;
   /** What to serve when a request matches no file (applied by the broker on `env.<BINDING>.fetch`). */
   not_found_handling?: "none" | "single-page-application" | "404-page";
@@ -246,11 +217,7 @@ function validateConfig(value: ConfigInput): ConfigValidation {
     return out;
   };
 
-  /**
-   * A storage-binding array (#74): each entry is a bare `"BINDING"` or
-   * `{ binding: "BINDING", id: "<kind>_<24hex>" }`. `kind` is the field's own
-   * resource kind, so an r2 id can't be pasted into `kv_namespaces`.
-   */
+  // `kind` is the field's own resource kind, so an r2 id can't be pasted into `kv_namespaces`.
   const resourceArray = (
     field: "kv_namespaces" | "d1_databases" | "r2_buckets" | "queues",
     kind: string,
@@ -283,12 +250,7 @@ function validateConfig(value: ConfigInput): ConfigValidation {
     return out;
   };
 
-  /**
-   * `queues`: a bare `"BINDING"`, or `{ binding, id?, queue?, ...consumer settings }`
-   * (see QueueBinding). Queue names are unique, and a dead letter queue is another queue's
-   * name; it need not be bound here (its messages then wait, as on Cloudflare, until a
-   * worker binds it).
-   */
+  // Queue names are unique; a dead letter queue need not be bound here (its messages wait, as on Cloudflare, until a worker binds it).
   const queueArray = (): QueueRef[] | undefined => {
     if (value.queues === undefined) return undefined;
     const raw = value.queues;
@@ -350,7 +312,6 @@ function validateConfig(value: ConfigInput): ConfigValidation {
       names.add(name);
       if (ref.dead_letter_queue !== undefined && ref.dead_letter_queue === name)
         errors.push(`queues.${entry.binding}.dead_letter_queue must be another queue`);
-      // A plain { binding, id } stays the same shape it always had.
       out.push(ref);
     }
     return out;
@@ -365,8 +326,7 @@ function validateConfig(value: ConfigInput): ConfigValidation {
   if (version_metadata === null) errors.push("version_metadata must be a binding name (UPPER_SNAKE_CASE)");
 
   const secrets = stringArray("secrets", bindingName, "binding names (UPPER_SNAKE_CASE)");
-  // Analytics Engine datasets aren't provisioned — the dataset name springs into
-  // existence on first writeDataPoint(), so there's no resource id to bind (#74).
+  // Analytics Engine datasets aren't provisioned: the name springs into existence on first writeDataPoint() (#74).
   const analytics_engine_datasets = stringArray(
     "analytics_engine_datasets",
     bindingName,
@@ -545,8 +505,7 @@ function validateConfig(value: ConfigInput): ConfigValidation {
 
 export function parseConfig(source: string): ConfigValidation {
   try {
-    // Config files intentionally support comments and trailing commas, but not
-    // arbitrary JavaScript expressions.
+    // Config files support comments and trailing commas, not arbitrary JavaScript.
     let json = "";
     let quoted = false;
     for (let index = 0; index < source.length; index++) {

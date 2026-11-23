@@ -6,18 +6,9 @@ import { join } from "node:path";
 import { Duplex } from "node:stream";
 import tls from "node:tls";
 
-// cloudflare:sockets connect() on the embedded transport (standalone sprouts, sproutd): no
-// application byte written after startTls(), or before `opened` on a secureTransport "on"
-// socket, may ever reach the wire in plaintext. The origins here record every raw byte they
-// receive and refuse anything but a TLS handshake record where the handshake must begin.
-//
-// The deterministic cases hold the sprout's I/O thread in its plaintext flush (a 16 MiB write
-// the origin reads only after a pause) while the handler calls startTls() and writes to the
-// new socket; the I/O thread then sees the upgrade and the new writes in one pass, which is
-// the race the TLS spike observed on 14 of 200 connections. `/burst` repeats the plain
-// immediate-write case many times, as the spike did.
-//
-// Needs SB_CLI, a sproutboat-cli checkout linked to this one (it builds the sprout).
+// cloudflare:sockets connect() on the embedded transport: no application byte written after startTls(), or before `opened` on a secureTransport "on"
+// socket, may reach the wire in plaintext. The origins record every raw byte and refuse anything but a TLS handshake record. The deterministic cases hold the
+// I/O thread in a plaintext flush while the handler upgrades (the race seen on 14 of 200 connections); `/burst` repeats the immediate-write case.
 const BLOB = 16 << 20;
 const handler = `
 import { connect } from "cloudflare:sockets";

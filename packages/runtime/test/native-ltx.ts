@@ -307,10 +307,8 @@ try {
     assert.deepEqual(await readdir(join(root, epoch)), finishedBefore, "idle restart must not rewrite a base");
     assert.equal((await readdir(root)).filter((n) => n.startsWith("epoch-")).length, 1);
   }
-  // A D1 batch() (__sbD1Batch) is a SAVEPOINT around its statements, each its own call,
-  // then RELEASE: one transaction, so one LTX file with the next TXID. A rolled-back batch
-  // (ROLLBACK TO, then RELEASE) commits the pages it touched back unchanged: at most one
-  // more LTX file, and the restored database has none of its rows.
+  // A D1 batch() (__sbD1Batch) is a SAVEPOINT around its statements, then RELEASE: one transaction, one LTX file with the next TXID. A rolled-back batch commits
+  // the pages it touched back unchanged: at most one more LTX file, and the restored database has none of its rows.
   {
     const batchPath = join(work, "batch.sqlite");
     await run(batchPath, "CREATE TABLE b(id INTEGER PRIMARY KEY,value TEXT);\n");
