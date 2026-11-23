@@ -171,9 +171,10 @@ class Headers {
     return out;
   }
 
-  entries() { return this._sorted(); }
-  keys() { return this._sorted().map((pair) => pair[0]); }
-  values() { return this._sorted().map((pair) => pair[1]); }
+  // Iterators, as in the Fetch spec: Effect reads `headers.keys().next().done`, and a bare Array has no next().
+  entries() { return this._sorted().values(); }
+  keys() { return this._sorted().map((pair) => pair[0]).values(); }
+  values() { return this._sorted().map((pair) => pair[1]).values(); }
   forEach(callback, thisArg = undefined) {
     for (const pair of this._sorted()) callback.call(thisArg, pair[1], pair[0], this);
   }
