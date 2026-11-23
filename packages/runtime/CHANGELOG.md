@@ -1,5 +1,11 @@
 # @sproutboat/runtime
 
+## 0.49.2
+
+### Patch Changes
+
+- 5624d0e: The broker transport (`sproutboat dev`, a deployed sprout) starts an app at compatibility date 2026-11-20 or later again. The prelude asks for the acknowledgement gate from that date, and only the embedded transport defined `__sbGateRaw`, so the app died at startup with `ReferenceError: __sbGateRaw is not defined`. The broker now defines it with the gate off.
+
 ## 0.49.1
 
 ### Patch Changes
