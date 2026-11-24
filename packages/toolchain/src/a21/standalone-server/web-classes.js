@@ -1,18 +1,10 @@
-// Vendored source: the web classes of the standalone build.
-//
-// What it is: Porffor alpha 19's runtime/fetch-globals.js with sproutboat's seven class patches applied
-// (@sproutboat/toolchain 0.26.1, patch fingerprint d9f485cffe3c, upstream 0c135ce), minus its four
-// C-timer functions (the standalone preamble's table replaces them), each class then assigned on globalThis so
-// that on alpha 22+ every free reference binds program-wide (P4).
-//
-// Why it is here: the standalone prelude composes these classes (standalone.ts). It used to acquire a whole
-// patched alpha 19 tree only to read them. That tree is gone; this file is maintained here, by hand.
-// Equivalence: everything after the marker below is byte for byte what the alpha 19 chain produced (sha256 in
-// sources.json, "origin").
+// Vendored source: the web classes of the standalone build, Porffor alpha 19's fetch-globals.js plus sproutboat's seven class patches (toolchain 0.26.1, d9f485cffe3c, upstream 0c135ce), minus four C-timer functions, each class assigned on globalThis (P4).
+// Why it is here: standalone.ts composes these classes and the patched alpha 19 tree is gone, so the file is kept by hand.
+// Equivalence: after the marker is the chain's output as vendored (sources.json "origin") plus the changes made on purpose since.
+
 // ---- end of provenance header ----
-// Alpha 19 web classes: Porffor alpha 19's runtime/fetch-globals.js with the toolchain's patches, so the
-// live generation's Headers, Request, Response, Blob, File, URL, TextEncoder and TextDecoder are the
-// prelude's own on alpha 22 (@sproutboat/toolchain/a21 standalone.ts).
+// Alpha 19 web classes: fetch-globals.js with the toolchain's patches, so the prelude's own Headers, Request, Response,
+// Blob, File, URL, TextEncoder and TextDecoder are used on alpha 22.
 globalThis.crypto = {};
 
 class Headers {
@@ -910,18 +902,14 @@ class Request {
     return new TextEncoder().encode(text);
   }
 
-  // The compatibility date, from the static the app tail sets once (__sbSetCompat). Every read of
-  // globalThis costs a rebuild of the whole global object (#get_globalThis), ~20 us each, so the
-  // per-request paths here avoid it; until the tail has run (the shared template, unit tests) it
-  // reads globalThis as before.
+  // The compatibility date, from the static the app tail sets once (__sbSetCompat): a read of globalThis rebuilds the
+  // whole global object (#get_globalThis, ~20 us), so per-request paths avoid it. Before the tail runs it reads globalThis.
   static _compat() { const d = Request._cd; return d === undefined ? globalThis.__sbCompat : d; }
   // Whether the prelude defined WebSocketPair: set by __sbInstallWebSockets once the date is known.
   static _hasWebSocketPair() { const h = Request._hasWsp; return h === undefined ? globalThis.WebSocketPair != null : h; }
 
-  // Fetch as workerd implements it, from compatibility date 2026-10-23: a Request made from
-  // another takes its body (the source becomes used, and a used one cannot be copied),
-  // GET and HEAD refuse any body, methods and redirect modes are workerd's, and errors
-  // carry workerd's messages. Before it, a copy shared the body, as it always did here.
+  // Fetch as workerd implements it, from compatibility date 2026-10-23: a Request made from another takes its body (the
+  // source becomes used), GET and HEAD refuse a body, methods, redirect modes and errors are workerd's. Before it, a copy shared the body.
   static _strict() { return Request._compat() >= '2026-10-23'; }
   static _usedError() {
     return new TypeError(Request._strict() ? 'Body has already been used. It can only be used once. Use tee() first if you need to read it twice.' : 'Body has already been used');
@@ -960,11 +948,8 @@ class Request {
     return message._bodyStream != null ? message._bodyStream : message._bodyInit;
   }
 
-  // body is a ReadableStream, as in Fetch: a stream body itself, else a stream made once over
-  // the bytes. The value as given stays in _bodyInit, which the native writer, streaming and
-  // the prelude read; assigning body (the native ingress does) sets it.
-  // From compatibility date 2026-10-21. Before it, body is the value as given, as it always
-  // was here (apps read request.body as a string); a deployed handler keeps its behaviour.
+  // From compatibility date 2026-10-21 body is a ReadableStream, as in Fetch (the stream itself, else one made once over the
+  // bytes); the value as given stays in _bodyInit, which the writer and prelude read. Before it, body is that value.
   static _bodyAsStream(message) {
     const init = message._bodyInit;
     if (!(Request._compat() >= '2026-10-21')) return init;
@@ -992,10 +977,8 @@ class Request {
     return (Porffor.type(body) | 0b10000000) == Porffor.TYPES.bytestring ? body : String(body);
   }
 
-  // A ReadableStream body is read to its end, and its chunks must be bytes, as in Fetch and
-  // workerd. Readers of such a body answer with a promise; other bodies keep answering at
-  // once, since the prelude reads them synchronously. The prelude defines ReadableStream on
-  // globalThis after this file is compiled.
+  // A ReadableStream body is read to its end and its chunks must be bytes, as in workerd. Its readers answer with a promise;
+  // other bodies answer at once, since the prelude reads them synchronously (it defines ReadableStream after this file).
   static _isStream(body) {
     const Stream = Request._stream ?? (Request._stream = globalThis.ReadableStream);
     return Stream != null && body instanceof Stream;

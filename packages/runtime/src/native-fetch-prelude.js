@@ -2341,12 +2341,8 @@ globalThis.__sbSetEnv = __sbSetEnv;
 /* oxlint-enable */
 // END WEB STREAMS
 
-// COMPRESSION STREAMS: CompressionStream and DecompressionStream ("gzip", "deflate",
-// "deflate-raw"), in JavaScript: the native runtime links no zlib. Compression is LZ77 with
-// fixed Huffman codes, one block per written chunk, so output follows input as it arrives;
-// it is smaller than the input for text, not as small as zlib's. Decompression inflates
-// stored, fixed and dynamic blocks once the input ends, and checks the CRC-32 or Adler-32.
-// A malformed or truncated stream errors with a TypeError, as in workerd.
+// COMPRESSION STREAMS in JavaScript, because the native runtime links no zlib. Compression is LZ77 with fixed Huffman
+// codes, one block per chunk, so output follows input; decompression waits for the input to end. Malformed input is a TypeError.
 
 const __sbCrcTable = (() => {
   const table = new Int32Array(256);
@@ -2668,13 +2664,9 @@ if (globalThis.CompressionStream == null) globalThis.CompressionStream = Compres
 if (globalThis.DecompressionStream == null) globalThis.DecompressionStream = DecompressionStream;
 // END COMPRESSION STREAMS
 
-// HTML REWRITER: Cloudflare's HTMLRewriter in JavaScript (workerd uses lol-html). It reads
-// the whole body, then tokenizes it once: elements, text and comments are matched against
-// the selectors given to on() and onDocument(), handlers run in document order (and may be
-// async), and the changes they ask for are written as the document is re-emitted.
-// Selectors: type, *, #id, .class, [attr], [attr=v], [attr~=v], [attr^=v], [attr$=v],
-// [attr*=v], [attr|=v], descendant and child combinators, and lists. Not :nth-child and
-// other pseudo-classes, which throw a TypeError on on(), as an unsupported selector does.
+// HTMLRewriter in JavaScript (workerd uses lol-html): reads the whole body, tokenizes once, runs handlers in document
+// order. Selectors: type, *, #id, .class, attribute forms, descendant and child combinators, lists; pseudo-classes
+// such as :nth-child throw a TypeError on on(), like any unsupported selector.
 
 const __sbVoidTags = new Set(["area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "param", "source", "track", "wbr"]);
 const __sbRawTextTags = new Set(["script", "style", "textarea", "title", "xmp", "iframe", "noembed", "noframes", "plaintext"]);
@@ -3054,23 +3046,9 @@ const __sbClearTimeout = globalThis.clearTimeout;
 const __sbSetInterval = globalThis.setInterval;
 const __sbClearInterval = globalThis.clearInterval;
 
-// Prepended to every handler by tools/compile.ts, before Porffor's native-fetch
-// bundled handler. Porffor's runtime/fetch-globals.js (checked through alpha-10)
-// gives URL (href/origin/pathname/search only) and Response without static
-// json() or redirect(). This adds, additively, the rest of the WHATWG surface Worker code
-// expects: URLSearchParams (read + write), URL.prototype.searchParams and the
-// protocol/host/hostname/port/hash accessors, static Response.json,
-// crypto.randomUUID / crypto.getRandomValues, crypto.subtle (digest + HMAC
-// sign/verify, #133), structuredClone, and FormData + Request/Response
-// formData()/bytes() (#60). Each is feature-detected; delete a block once
-// Porffor ships that global. crypto.scryptVerify (#153) is a Sproutboat
-// extension, not WHATWG, and stays.
-// Tracked in the platform's upstream notes:
-// https://github.com/baronunread/sproutboat/blob/main/patches/upstream/whatwg-fetch-globals.md
-//
-// Declared before it is referenced: a getter body that names a later top-level
-// class throws ReferenceError in Porffor. See:
-// https://github.com/baronunread/sproutboat/blob/main/patches/upstream/class-declaration-scope.md
+// Prepended to every handler by tools/compile.ts. Porffor's fetch-globals.js lacks most of the WHATWG surface Worker
+// code expects; each block is feature-detected, so delete it once Porffor ships that global.
+// Declared before it is referenced: a getter body that names a later top-level class throws ReferenceError in Porffor.
 
 // Duck-typing helpers, `typeof`-free (the repo's anti-slop lint bans `typeof`;
 // these express the same spec-mandated checks and are verified under Porffor
@@ -3088,10 +3066,8 @@ function __sbIsObj(v) {
   return v !== null && Object(v) === v;
 }
 
-// #41 — cold-start phase marker. Runs as the first thing in the bundle: writes
-// the current wall-clock ms to $SB_STARTUP_FILE so the supervisor can split
-// cold-start into "spawn -> JS starts" (process + runtime bootstrap) and
-// "JS starts -> listening" (module eval + server bind). No-op when unset.
+// #41: cold-start phase marker. Writes the wall-clock ms to $SB_STARTUP_FILE so the supervisor can split cold start
+// into "spawn -> JS starts" and "JS starts -> listening". No-op when unset.
 function __sbStartupMark() {
   // oxlint-disable-next-line no-unused-expressions -- Porffor.c`...` is inline C the compiler consumes, not a JS expression.
   Porffor.c`
@@ -3109,11 +3085,8 @@ function __sbStartupMark() {
 }
 __sbStartupMark();
 
-// #28 — process CPU time in ms (CLOCK_PROCESS_CPUTIME_ID). Marshalled back as a
-// string via the same primitives as __sbEnv / __sbRandomBytes (proven working),
-// then parsed — Porffor's number boxing for a bare inline-C assignment is not
-// relied on. `__sbEntry` samples it around the handler for per-invocation CPU.
-// The number comes back as a number: no text and no parse around it.
+// #28: process CPU time in ms (CLOCK_PROCESS_CPUTIME_ID), returned as a number; `__sbEntry` samples it around the
+// handler for per-invocation CPU.
 function __sbCpuMs() {
   let ms = 0;
   // oxlint-disable-next-line no-unused-expressions -- Porffor.c`...` is inline C the compiler consumes, not a JS expression.
@@ -3168,19 +3141,13 @@ function __sbCpuEnd(cell) {
   `;
 }
 
-// #28 — stamp `x-sb-cpu-ms` onto a handler Response. Porffor alpha-10's
-// native-fetch serializer only reads headers from the plain object passed to
-// `new Response(body, { headers })` — a later `.set()` or a `Headers` instance
-// is ignored on the wire — so the metric is carried by rebuilding the Response
-// with one extra header. Safe only for a string body (the norm under
-// http-sync-v0) with no Set-Cookie to comma-fold; anything else is returned
-// untouched and the edge simply omits cpuMs for that request.
+// #28: stamp `x-sb-cpu-ms` onto a handler Response. Porffor's native-fetch serializer only reads headers from the plain
+// object passed to `new Response(body, { headers })`, so the stamp rebuilds the Response. String body without
+// Set-Cookie only; anything else is returned untouched and the edge omits cpuMs.
 function __sbTagCpu(res, cpu) {
   try {
-    // A string body and no Set-Cookie, as before. The native writer reads Headers' flat `_entries`,
-    // so the stamp is appended to the handler's own Response instead of building a second one (a
-    // Headers, a body extraction and a status check, plus a copy of every header); an x-sb-cpu-ms
-    // the handler set itself is replaced by the measured one, as before.
+    // The native writer reads Headers' flat `_entries`, so the stamp is appended to the handler's own Response
+    // instead of building a second one; an x-sb-cpu-ms the handler set itself is replaced by the measured one.
     const headers = res && res.headers;
     if (headers && __sbIsStr(__sbRawBody(res)) && !headers.has("set-cookie")) {
       const stamp = __sbCpuStamp(cpu);
@@ -3408,10 +3375,9 @@ for (const E of [Error, TypeError, RangeError, ReferenceError, SyntaxError, Eval
 // Object.fromEntries(headers) work. Porffor's Headers has entries() but no iterator.
 if (Headers.prototype[Symbol.iterator] == null) Headers.prototype[Symbol.iterator] = Headers.prototype.entries;
 
-// workerd's immutable headers, from compatibility date 2026-10-23: an incoming request's,
-// a fetched or service-binding response's, and Response.redirect()'s refuse append, set
-// and delete with a TypeError. A copy (new Headers(h), new Response(body, res)) is
-// mutable. The runtime's own writes after the handler lift the guard first.
+// workerd's immutable headers, from compatibility date 2026-10-23: an incoming request's, a fetched or service-binding
+// response's and Response.redirect()'s refuse append/set/delete with a TypeError; a copy is mutable.
+// The runtime's own writes after the handler lift the guard first.
 function __sbFreezeHeaders(message) {
   if (__sbCompatDate() >= "2026-10-23") message.headers._immutable = true;
   return message;
@@ -3428,15 +3394,9 @@ if (Response.redirect == null) {
   };
 }
 
-// #59 — caches.default / caches.open(name), backed by the broker's cache.*
-// ops (a sibling SQLite table, key on method+URL for v1 — no Vary yet).
-// Deliberately NOT async: every other buffered-body method on this runtime
-// (text/json/arrayBuffer/blob, formData above) is sync too, and #168's own
-// investigation found real coroutine-state corruption tied specifically to
-// nested `async function` calls accumulating across many requests — no
-// reason to add more async surface to that here. `await`ing a non-promise
-// still resolves immediately, so `await caches.default.match(...)` reads
-// exactly like the spec's Promise-returning version to calling code.
+// #59: caches.default / caches.open(name) over the broker's cache.* ops (key on method+URL, no Vary yet).
+// Deliberately NOT async: #168 found coroutine-state corruption from nested `async function` calls accumulating
+// across requests. `await` on a non-promise still resolves at once, so callers read it like the spec version.
 if (globalThis.caches == null) {
   function __sbCacheKey(request) {
     return "GET " + (__sbIsStr(request) ? request : request.url);
@@ -3489,12 +3449,8 @@ if (globalThis.caches == null) {
   };
 }
 
-// #60 — Porffor's Request/Response give text()/json()/arrayBuffer()/blob()
-// synchronously (buffered body, fine under http-sync-v0) but no FormData at
-// all. Parses the same buffered body, synchronously, into a FormData-like
-// object; url-encoded via the URLSearchParams shim above, multipart by hand
-// (RFC 7578: boundary-delimited parts, each a header block then a blank line
-// then the part body — one pass, no nested multipart).
+// #60: Porffor's Request/Response have no FormData. Parses the same buffered body synchronously: url-encoded via the
+// URLSearchParams shim, multipart by hand (RFC 7578, one pass, no nested multipart).
 if (globalThis.FormData == null) {
   class __SproutboatFormData {
     constructor() {
@@ -3621,11 +3577,8 @@ if (!("bytes" in Response.prototype)) {
   };
 }
 
-// Porffor's URL exposes href / origin / pathname / search only. Add the rest of
-// the WHATWG read surface, derived from `origin` (scheme://host[:port]).
-// `hash` is always '' server-side — browsers strip the fragment before the
-// request, so there is nothing to recover. See:
-// https://github.com/baronunread/sproutboat/blob/main/patches/upstream/whatwg-fetch-globals.md
+// Porffor's URL has href/origin/pathname/search only; the rest of the read surface is derived from `origin`.
+// `hash` is always '': browsers strip the fragment before the request.
 function __sbDefineURLAccessor(name, get) {
   if (!(name in URL.prototype)) Object.defineProperty(URL.prototype, name, { configurable: true, get });
 }
@@ -3661,10 +3614,8 @@ __sbDefineURLAccessor("password", function () {
   return "";
 });
 
-// crypto.randomUUID / getRandomValues are absent in native-fetch. Provide them
-// backed by the OS CSPRNG (`__sbRandomBytes` -> inline C -> /dev/urandom), so
-// tokens, idempotency keys and UUIDs are unpredictable. Deliberately no insecure
-// fallback — a silent downgrade to a weak source is worse than throwing.
+// crypto.randomUUID / getRandomValues are absent in native-fetch; backed by the OS CSPRNG via `__sbRandomBytes`.
+// Deliberately no insecure fallback: a silent downgrade to a weak source is worse than throwing.
 if (globalThis.crypto == null) globalThis.crypto = {};
 if (globalThis.crypto.getRandomValues == null) {
   // Every byte of the view, as WebCrypto fills it: a Uint32Array gets 4 random bytes per element.
@@ -3770,11 +3721,9 @@ if (globalThis.crypto.getRandomValues == null) {
   };
 }
 
-// DOMException. Porffor's own global is a stub that reports typeof "function" but cannot be
-// constructed (`new DOMException("m", "AbortError")` throws "not a constructor"), so the runtime
-// installs a real one: legacy codes, the named constants, the options form with `cause`, and
-// instanceof Error, as in workerd. AbortSignal reasons, the stream polyfill and WebCrypto errors
-// use it, so a library can test `error instanceof DOMException` and `error.name`.
+// DOMException. Porffor's own global is a stub that cannot be constructed (`new DOMException("m", "AbortError")`
+// throws "not a constructor"), so the runtime installs a real one, as in workerd; AbortSignal reasons, the stream
+// polyfill and WebCrypto errors use it, so `error instanceof DOMException` and `error.name` work.
 const __sbDomCodes = {
   IndexSizeError: 1, HierarchyRequestError: 3, WrongDocumentError: 4, InvalidCharacterError: 5,
   NoModificationAllowedError: 7, NotFoundError: 8, NotSupportedError: 9, InUseAttributeError: 10,
@@ -3806,10 +3755,8 @@ globalThis.DOMException = __SbDOMException;
 
 /* oxlint-disable anti-slop/no-runtime-typeof -- these Web API polyfills branch on JavaScript types
    exactly where their specs do (listener: function or { handleEvent }; structured clone: by value type). */
-// Event, CustomEvent, EventTarget, AbortSignal and AbortController, as workerd has
-// them (no DOM tree, so no bubbling or capture phases). Found missing by the W2
-// conformance suite; libraries use AbortController for fetch timeouts and EventTarget
-// for their own events.
+// Event, CustomEvent, EventTarget, AbortSignal and AbortController as workerd has them (no DOM tree, so no bubbling
+// or capture). Found missing by the W2 conformance suite.
 if (typeof globalThis.EventTarget !== "function") {
   const namedError = (name, message) => new globalThis.DOMException(message, name);
   class Event {
@@ -4005,11 +3952,8 @@ if (globalThis.TextEncoderStream == null) {
   globalThis.TextDecoderStream = TextDecoderStream;
 }
 
-// structuredClone: the HTML structured-clone algorithm for the types Worker code
-// passes around. Keeps cycles and shared references (a memo per call), Date, RegExp,
-// Map, Set, ArrayBuffer, typed arrays, DataView, errors, arrays and plain objects;
-// functions and symbols throw DataCloneError. It replaced a JSON round-trip that lost
-// every non-JSON type and crashed on cycles (W2 conformance).
+// structuredClone: the HTML algorithm for the types Worker code passes around, keeping cycles and shared references.
+// It replaced a JSON round-trip that lost every non-JSON type and crashed on cycles (W2 conformance).
 if (globalThis.structuredClone == null) {
   const dataCloneError = (what) => {
     const e = new Error(what + " could not be cloned");
@@ -4076,12 +4020,9 @@ if (globalThis.crypto.randomUUID == null) {
   };
 }
 
-// #133 — a WebCrypto subset: crypto.subtle.digest (SHA-256/384/512) and HMAC
-// sign/verify over a raw key. Enough for JWTs and hand-rolled sessions; not a
-// complete SubtleCrypto (no ECDSA, no AES, no key wrapping). The surface is
-// exactly standard so it can be deleted when Porffor ships Web Crypto
-// (CanadaHonk/porffor#347). Backed by the inline-C SHA-2 above, not a link
-// dependency, so it works on the broker transport too.
+// #133: a WebCrypto subset, crypto.subtle.digest (SHA-256/384/512) and HMAC sign/verify over a raw key, standard
+// so it can be deleted when Porffor ships Web Crypto (CanadaHonk/porffor#347). Backed by the inline-C SHA-2 above,
+// so it works on the broker transport too.
 function __sbHashBits(algo) {
   const n = String((algo && algo.name) || algo || "").toUpperCase();
   if (n === "SHA-1" || n === "SHA1") return "1";
@@ -4102,23 +4043,9 @@ function __sbToBytes(input) {
   // sproutd #22: one C pass when the input allows it (see __sbToBytesNative).
   const native = __sbToBytesNative(input);
   if (native !== "") return native;
-  // Windowed accumulation (#180, then #181). Plain `s +=` in a loop is O(n^2)
-  // here, since Porffor's strings have no rope/cons optimization and every
-  // append copies the whole accumulated string -- that's #180, a 43KB body
-  // taking ~52ms to encode. But 0.6.4's unconditional array-push-then-join
-  // regressed the common case badly: a real app hashing ~150-byte inputs per
-  // request lost 64% of its throughput and gained 41% RSS (#181), far more
-  // than the per-call cost of the array ops measures in isolation.
-  //
-  // So: append into a window, and only once a window fills does an array come
-  // into existence to hold it. An input below __SB_BYTES_WINDOW allocates no
-  // array at all and runs exactly like the pre-#180 code; a large one caps the
-  // quadratic copy at one window and joins the windows once. Measured on a
-  // `porf native` build, this ties `+=` at 100-512 bytes and ties array+join
-  // at 8-43KB, with no threshold branch to keep in sync.
-  //
-  // Both branches flush only on a complete character, never mid-sequence, so a
-  // surrogate pair can't be split across two windows.
+  // Windowed accumulation (#180, #181): plain `s +=` is O(n^2) (Porffor strings have no ropes), but an unconditional array
+  // push and join cost a real app 64% of its throughput and 41% RSS on ~150-byte inputs. So fill a window, build an array
+  // only once it fills, and flush on a complete character so a surrogate pair never splits.
   if (__sbIsStr(input)) {
     let out = null;
     let s = "";
@@ -4169,30 +4096,15 @@ function __sbBufFrom(latin1) {
   for (let i = 0; i < latin1.length; i++) b[i] = latin1.charCodeAt(i) & 0xff;
   return b.buffer;
 }
-// The reverse of __sbToBytes: a latin1 string holding raw UTF-8 bytes (one
-// byte per char) -> a real JS string, decoding multi-byte sequences into
-// single characters. Validates each continuation byte (10xxxxxx) before
-// consuming it, so a lead byte with no valid continuation -- the common case
-// for genuine Latin-1 text, e.g. a lone "é" -- passes through unchanged
-// rather than swallowing following characters into a garbage code point.
-// Used only where sproutboat's own glue knows for certain the string is
-// opaque bytes off the wire (the `x-sb-raw-body` producers below), never on
-// a generic string a handler might have built -- Porffor represents any
-// string whose chars are all <= 0xff as this same "bytestring" shape
-// regardless of whether it holds real Latin-1 text or raw bytes, so this
-// decode is only safe where the caller already knows which one it has.
+// The reverse of __sbToBytes: a latin1 string of raw UTF-8 bytes -> a real string. Each continuation byte is
+// validated, so a lone Latin-1 "é" passes through unchanged. Porffor gives any string with all chars <= 0xff the
+// same "bytestring" shape, so use this only where the glue knows the string is opaque bytes off the wire.
 function __sbFromUtf8(bytes) {
   // sproutd #22: one C pass for a string of bytes (see __sbFromUtf8Native).
   const native = __sbFromUtf8Native(bytes);
   if (native !== "") return native;
-  // Collected into an array and joined once at the end, not built with
-  // repeated `out +=` -- Porffor's strings have no rope/cons optimization, so
-  // `+=` in a loop copies the whole accumulated string on every append,
-  // making the naive version O(n^2). Measured on the real 43KB homepage
-  // (dynamic, wire-sourced content, not a compile-time constant): each
-  // successive 8000-character chunk took visibly longer than the last, ~2.8s
-  // total -- a real, shipped performance regression on sproutboat.com.
-  // `Array.prototype.join` builds the result in one pass.
+  // Collected and joined once, not `out +=`: that copies the whole string on every append (O(n^2)); on the real
+  // 43KB homepage it took ~2.8s, a shipped regression on sproutboat.com.
   const out = [];
   const len = bytes.length;
   const cont = (j) => {
@@ -4238,32 +4150,9 @@ function __sbFromUtf8(bytes) {
   }
   return out.join("");
 }
-// sproutboat #181 — wrap a Response built from raw wire bytes (the assets
-// binding, outbound fetch(), service-binding fetch(): the three `x-sb-raw-
-// body` producers) so a handler calling `.text()`/`.json()` on it gets the
-// bytes properly UTF-8-decoded. The wire write path already handles the
-// C-level byte-for-byte passthrough via that same header (#176) -- this is
-// the separate, missing half: Porffor's own `Response.prototype.text()`
-// returns a `bytestring` body verbatim instead of decoding it (it can't tell
-// "opaque bytes" from "a handler's own Latin-1-range string" apart, so it
-// safely can't decode by default). Overriding just these three instances,
-// which sproutboat itself builds and knows are bytes, fixes the read side
-// without touching Porffor's generic Response/Request classes at all.
-// Decoded lazily, on first .text()/.json() call, and memoized after that --
-// most raw-body responses (a static asset, a proxied fetch()) are handed
-// straight back to the client and never read as text at all, and Porffor's
-// strings have no rope/cons optimization: `+=`-building a decoded copy costs
-// real time proportional to the body size (measured ~116ms for a 44KB
-// all-ASCII body). Decoding unconditionally at construction paid that cost
-// on every asset request regardless of whether anything used it -- this was
-// a real, shipped performance regression on sproutboat.com, caught after
-// the fact by unexpectedly slow page loads.
-// #232 — a fetch() request body for the wire: text as-is, and an ArrayBuffer or
-// any view as its bytes (one char per byte) flagged bodyBinary, instead of
-// String(view), which sent "0,1,2,...".
-// A body stream the runtime made over a value (Response/Request body): that value. Bindings
-// that take a body at once (R2 and KV put, outbound fetch) read it without draining the
-// stream, so put(key, request.body) works as in Workers. Other values pass through.
+// sproutboat #181 — wrap a Response built from raw wire bytes (assets, outbound fetch(), service-binding fetch()) so
+// .text()/.json() UTF-8-decode it, decoded lazily and memoized (decoding up front cost ~116ms per 44KB asset request).
+// #232: a fetch() request body is text as-is, an ArrayBuffer or view its bytes (bodyBinary); a runtime body stream reads as its value.
 function __sbUnwrapBody(value) {
   return value != null && value._sbBody !== undefined ? value._sbBody : value;
 }
@@ -4290,10 +4179,8 @@ function __sbRawBodyResponse(body, init) {
       return decoded;
     };
     resp.json = () => JSON.parse(resp.text());
-    // #232 — Porffor's arrayBuffer() goes through text(), which decodes UTF-8
-    // above and so collapsed a binary body's multi-byte runs. The body already
-    // is the bytes, one char per byte. blob() stays text-based: Porffor's Blob
-    // only holds text and has no arrayBuffer() to read bytes back out of.
+    // #232: Porffor's arrayBuffer() goes through text(), which UTF-8-decodes and collapsed a binary body's multi-byte
+    // runs; the body already is the bytes. blob() stays text-based: Porffor's Blob only holds text.
     resp.arrayBuffer = () => __sbBufFrom(body);
     resp.bytes = () => new Uint8Array(__sbBufFrom(body));
   }
@@ -4311,13 +4198,9 @@ function __sbEqCt(a, b) {
 // An even-length all-hex string -> its bytes; anything else -> its raw bytes.
 function __sbHexOrBytes(value) {
   if (__sbIsStr(value) && value.length > 0 && value.length % 2 === 0) {
-    // The high nibble waits in a local until its pair arrives, instead of the
-    // old `out = out.slice(0, -1) + ...` rewrite, which copied the whole
-    // accumulated string a second time per byte. Deliberately still `+=` and
-    // not __sbToBytes' windowing: this decodes an HMAC signature, which is
-    // tens of bytes, and #181 showed array allocation is the expensive part at
-    // that size. ponytail: O(n^2) above a few KB, window it like __sbToBytes
-    // if a caller ever passes something that big.
+    // The high nibble waits in a local until its pair arrives (no per-byte rewrite of the whole string). Still `+=`,
+    // not __sbToBytes' windowing: this decodes an HMAC signature of tens of bytes, where #181 showed arrays cost more.
+    // ponytail: O(n^2) above a few KB, window it if a caller ever passes that much.
     let out = "";
     let hi = 0;
     for (let i = 0; i < value.length; i++) {
@@ -4405,18 +4288,9 @@ if (globalThis.crypto.subtle == null) {
 }
 // SUBTLE-JS:BEGIN (the whole of workerd-style crypto.subtle; wrap.ts drops it for a handler that never touches crypto.subtle)
 const __sbSubtleLegacy = globalThis.crypto.subtle;
-// ---------------------------------------------------------------------------
-// crypto.subtle with workerd's surface, from compatibility date __SB_SUBTLE_DATE.
-//
-// What it adds over the digest/HMAC/PBKDF2 subset above: RSASSA-PKCS1-v1_5, RSA-PSS, ECDSA
-// (P-256, P-384, P-521), Ed25519 (and workerd's NODE-ED25519), PBKDF2 and HKDF for every hash,
-// generateKey, importKey and exportKey in raw, spki, pkcs8 and jwk, deriveBits, deriveKey, and
-// errors that are DOMExceptions with workerd's names. The primitives are BearSSL's and
-// Monocypher's, reached through __sbSubtleRaw (embedded transport only; see subtle/README.md).
-// A key's material lives in a byte string: the raw secret, or the DER of its PKCS#8 (private) or
-// SPKI (public) form, so every operation is one call into C with that string and the data.
-// ---------------------------------------------------------------------------
-// Placeholder: the compatibility date this lands at is the maintainers' to pick.
+// crypto.subtle with workerd's surface from compatibility date __SB_SUBTLE_DATE (a placeholder, the maintainers' to pick).
+// BearSSL and Monocypher primitives via __sbSubtleRaw (embedded transport only; see subtle/README.md). Key material is a
+// byte string: the raw secret, or the DER of its PKCS#8 or SPKI form.
 const __SB_SUBTLE_DATE = "2026-11-06";
 function __sbSubtleOn() {
   return __sbCompatDate() >= __SB_SUBTLE_DATE;
@@ -5366,10 +5240,8 @@ globalThis.SubtleCrypto = SubtleCrypto;
   });
 }
 
-// crypto.DigestStream, as workerd has it: a WritableStream whose .digest promise resolves to the
-// hash of everything written. From __SB_SUBTLE_DATE only (the property reads as undefined before).
-// The chunks are gathered and hashed once at close: the hash functions have no incremental
-// entry from JavaScript, so memory is the size of the stream.
+// crypto.DigestStream, as workerd has it, from __SB_SUBTLE_DATE only. The chunks are gathered and hashed once at
+// close: the hash functions have no incremental entry from JavaScript, so memory is the size of the stream.
 class DigestStream extends globalThis.WritableStream {
   constructor(algorithm) {
     const bits = __sbHashBits(algorithm);
@@ -5405,11 +5277,8 @@ Object.defineProperty(globalThis.crypto, "DigestStream", {
 });
 // SUBTLE-JS:END
 
-// #153 — scrypt verification, for migrating password hashes made elsewhere
-// (Node/Bun `scrypt`, N/r/p). Not on WebCrypto; deliberately verify-only, so it
-// is a migration tool rather than a KDF blessed for new credentials — new
-// credentials should use HMAC/PBKDF2 via crypto.subtle. `expected` is the stored
-// hash: a hex string, or bytes (ArrayBuffer / Uint8Array).
+// #153: scrypt verification, for migrating password hashes made elsewhere. Deliberately verify-only: a migration
+// tool, not a KDF for new credentials (use HMAC/PBKDF2 via crypto.subtle). `expected` is a hex string or bytes.
 if (globalThis.crypto.scryptVerify == null) {
   globalThis.crypto.scryptVerify = function (password, salt, expected, params) {
     const p = params || {};
@@ -5430,17 +5299,9 @@ if (globalThis.crypto.scryptVerify == null) {
   };
 }
 
-// ---------------------------------------------------------------------------
-// Bindings: env.<KV>, env.<SECRET>, env.<D1>, env.<R2>, and globalThis.fetch,
-// backed by a Bun broker on a loopback TCP port. The transport is inline C —
-// blocking write/read per call over ONE long-lived connection (http-sync-v0: one
-// sprout event-loop turn per request, so a blocking roundtrip is acceptable).
-// Wire frame:
-//   [u32 LE len][ <token> "\n" <json> ]   reply: [u32 LE len][ <json> ]
-// Shared C preamble: the headers, the two Porffor marshalling helpers every
-// inline-C block uses, and the CSPRNG. Lives here rather than in a transport so
-// both transports — and __sbRandomBytes / __sbEnv below — compile against the
-// same declarations.
+// Bindings: env.<KV>, env.<SECRET>, env.<D1>, env.<R2> and globalThis.fetch over a Bun broker on a loopback TCP port, one blocking
+// inline-C call per roundtrip (http-sync-v0). Frame: [u32 LE len][ <token> "\n" <json> ], reply [u32 LE len][ <json> ].
+// The shared C preamble lives here, not in a transport, so both transports and __sbRandomBytes / __sbEnv see the same declarations.
 // oxlint-disable-next-line no-unused-expressions -- Porffor.c`...` is inline C the compiler consumes, not a JS expression.
 Porffor.c`
 #include <sys/socket.h>
@@ -6074,10 +5935,8 @@ function __sbFillBytes(bytes, view) {
   return ok === 1;
 }
 
-// atob for the common case: no whitespace, only base64 characters, `=` padding
-// only where the spec allows it. Returns the decoded bytestring, or "" for
-// anything else (including an empty result), so the caller's JS path decides
-// and throws.
+// atob for the common case: no whitespace, only base64 characters, `=` only where the spec allows it. Returns the
+// decoded bytestring, or "" for anything else, so the caller's JS path decides and throws.
 // oxlint-disable-next-line no-unused-vars -- `text` is read inside the RawC block below, not by JS.
 function __sbAtobNative(text) {
   let out = "";
@@ -10296,10 +10155,8 @@ function __sbSubtleRaw(op, a, b, c, d) {
   return out;
 }
 // SUBTLE:END
-// #63 — every request carries the protocol version it was built against and an
-// id unique to this process. The id is what makes a resend safe: the transport
-// retries the *same bytes*, so a broker that already applied the request can
-// recognise it and replay its answer instead of applying it twice.
+// #63: every request carries the protocol version and an id unique to this process. The transport retries the same
+// bytes, so a broker that already applied the request recognises the id and replays its answer.
 var __sbReqId = 0;
 
 function __sbRpc(op, extra) {
@@ -10310,11 +10167,8 @@ function __sbRpc(op, extra) {
   return reply;
 }
 
-// KV from compatibility date 2026-10-25: workerd's surface. Every method returns a
-// Promise; keys and options are checked with KV's errors; get() takes a list of keys and
-// the "stream" type; getWithMetadata(); put() takes a ReadableStream and metadata; list()
-// pages with limit and cursor and returns each key's expiration and metadata. Earlier
-// dates keep the synchronous shim below.
+// KV from compatibility date 2026-10-25: workerd's surface (Promises, KV's errors, list-of-keys get, "stream" type,
+// getWithMetadata, ReadableStream put, paged list). Earlier dates keep the synchronous shim below.
 function __sbKvStrict() {
   return __sbCompatDate() >= "2026-10-25";
 }
@@ -10430,15 +10284,9 @@ function __sbMakeKv(ns) {
   };
 }
 
-// D1: a Cloudflare-shaped `env.<DB>` (prepare / bind / all / run / raw / first,
-// plus batch and exec). Every call is one broker roundtrip.
-//
-// Bytes (an ArrayBuffer or a typed array) bind as a BLOB at every compatibility date:
-// before, they were stored as NULL. From compatibility date 2026-10-24 D1 calls are
-// strict, as in workerd: a parameter must be null, a number, a string, a boolean or
-// bytes (D1_TYPE_ERROR otherwise), the count must match the statement, foreign keys
-// are enforced, errors read "D1_ERROR: ...", and a BLOB comes back as an array of
-// byte values. Earlier dates keep the old behaviour.
+// D1: a Cloudflare-shaped `env.<DB>`; every call is one broker roundtrip. Bytes bind as a BLOB at every date (they
+// were NULL before). From compatibility date 2026-10-24 calls are strict as in workerd (typed parameters, matching
+// count, foreign keys, "D1_ERROR: ..." errors, BLOBs back as byte arrays); earlier dates keep the old behaviour.
 function __sbD1Strict() {
   return __sbCompatDate() >= "2026-10-24";
 }
@@ -10453,10 +10301,9 @@ function __sbD1Param(value, strict) {
   // oxlint-disable-next-line anti-slop/no-runtime-typeof -- workerd's D1_TYPE_ERROR names the value's typeof
   throw new Error("D1_TYPE_ERROR: Type '" + typeof value + "' not supported for value '" + String(value) + "'");
 }
-// An embedded (standalone) build sets this to hand the request object straight to its
-// dispatcher. D1 replies are the biggest ones a handler sees (20 rows is 100 cells), and
-// the JSON.stringify and JSON.parse around the in-process call cost more than SQLite did.
-// The broker transport leaves it unset and keeps the string hop. (No initializer: the transport is placed ahead of the prelude, and `= null` would run after its assignment.)
+// An embedded (standalone) build sets this to hand the request object straight to its dispatcher: D1 replies are the
+// biggest a handler sees and JSON.stringify/parse around the in-process call cost more than SQLite. No initializer: the
+// transport is placed ahead of the prelude, and `= null` would run after its assignment.
 // oxlint-disable-next-line no-unassigned-vars -- the embedded transport assigns it; the broker transport does not.
 var __sbCallDirect;
 // The embedded transport also answers a strict D1 query without the generic dispatch around it
@@ -10545,10 +10392,9 @@ function __sbD1IsTransaction(text) {
     word === "begin" || word === "commit" || word === "end" || word === "rollback" || word === "savepoint" || word === "release"
   );
 }
-// From 2026-11-03: workerd's D1 authorizer lets a PRAGMA run only if it is one of these (the name as
-// written: PRAGMA TABLE_INFO is refused, as is any schema but main). Any other reads "not authorized".
-// Checked in the shim, so every transport answers alike. A query or batch statement is only looked at
-// when it starts with P (after spaces and comments); an exec line is scanned statement by statement.
+// From 2026-11-03: workerd's D1 authorizer lets a PRAGMA run only if it is on this list (name as written; any schema but
+// main is refused), else "not authorized". Checked in the shim so every transport answers alike; only statements
+// starting with P (after spaces and comments) are looked at, an exec line statement by statement.
 function __sbD1Parity() {
   return __sbCompatDate() >= "2026-11-03";
 }
@@ -10680,15 +10526,8 @@ function __sbD1Promise(run) {
   }
 }
 // ---- group commit (design 029 stage S1b) ----
-// With SB_LTX_GROUP=1 a strict D1 call does not wait for its own fsync. Its commit is made (SQLite believes it is durable,
-// synchronous=FULL stays set) but the WAL sync is owed, and the promise it returns settles only after one flush: a timer
-// that runs after the requests already read in this loop iteration have made their own calls, then one fsync per owed WAL
-// and the capture of what was committed. N concurrent requests so cost one fsync, not N. The wait is adaptive: while commits
-// arrive one at a time the flush runs at the end of the turn (a lone request pays its own fsync and nothing for the group),
-// and once a flush has carried more than one commit the next ones wait the timer's 1 ms so the others can join; four flushes of
-// one in a row go back to the first mode, and every eighth idle flush tries the wait again. Nothing is acknowledged before it:
-// the caller sees a result only through a promise, and every call, read or write, waits while anything is owed, so no
-// request can act on data a power cut could still take back. A call that returns nothing owed settles at once.
+// With SB_LTX_GROUP=1 a strict D1 call's WAL sync is owed and its promise settles after one shared flush (N requests, one fsync).
+// A lone commit flushes at the end of the turn; after a multi-commit flush later ones wait 1 ms. Every call waits while anything is owed.
 let __sbGroupState = -1;
 let __sbGroupWaiters = [];
 let __sbGroupTimer = false;
@@ -10919,10 +10758,8 @@ function __sbMakeD1(dbName) {
     dump() {
       return Promise.reject(__sbD1Fail("D1_DUMP_ERROR: dump() is not supported; use backup()"));
     },
-    // Sproutboat extension (not in CF Workers D1): an online, integrity-checked
-    // snapshot of this database. Both transports implement it: standalone writes
-    // under `<data-dir>/backups/`, the broker under the resource directory's
-    // `backups/`. Omit `name` for a timestamped default. See #164.
+    // Sproutboat extension (not in CF Workers D1): an online, integrity-checked snapshot of this database, written under
+    // `<data-dir>/backups/` (standalone) or the resource directory's `backups/` (broker). Omit `name` for a timestamp. See #164.
     backup(name) {
       const r = __sbRpc("d1.backup", { db: dbName, name: name == null ? "" : String(name) });
       return { path: r.path, bytes: r.bytes };
@@ -10945,11 +10782,8 @@ function __sbR2Object(meta, body) {
   };
   if (body != null) {
     obj.body = body;
-    // #184 — `body` is raw bytes (a bytestring), not decoded text: `.text()`
-    // returning it verbatim produced mojibake for any object holding real
-    // UTF-8 content, the same gap __sbRawBodyResponse already closed for
-    // assets/fetch/service-binding responses. Same fix here: decode lazily,
-    // once, on first read.
+    // #184: `body` is raw bytes (a bytestring), so `.text()` returned mojibake for real UTF-8 content; decode lazily,
+    // once, on first read, as __sbRawBodyResponse does.
     let decoded = null;
     obj.text = function () {
       if (decoded === null) decoded = __sbFromUtf8(body);
@@ -10958,12 +10792,8 @@ function __sbR2Object(meta, body) {
     obj.json = function () {
       return JSON.parse(obj.text());
     };
-    // #177 — `new Response(obj.body)` UTF-8-re-encodes the raw bytes (they're
-    // a bytestring, same ambiguity #172/#176 exist to resolve): any byte
-    // 0x80-0xFF doubles into two bytes, corrupting binary content on the way
-    // out. `toResponse()` is the fix already used for assets/fetch/service
-    // bindings (`__sbRawBodyResponse`, below) — same reserved x-sb-raw-body
-    // marker, applied here too.
+    // #177: `new Response(obj.body)` UTF-8-re-encodes the raw bytes (bytes 0x80-0xFF double), corrupting binary content.
+    // `toResponse()` carries the same reserved x-sb-raw-body marker as __sbRawBodyResponse below.
     obj.toResponse = function (init) {
       const opts = init || {};
       const headers = new Headers(opts.headers || {});
@@ -11006,13 +10836,9 @@ function __sbR2Multipart(bucket, key, uploadId) {
   };
 }
 
-// R2 from compatibility date 2026-10-26: workerd's surface. Every method returns a
-// Promise; an object's etag is the MD5 of its bytes (sha256 before; objects written
-// earlier keep theirs), with `checksums.md5`, `uploaded` as a Date and `range`; get()
-// takes `range` and `onlyIf`, put() takes `onlyIf`, a ReadableStream or a Blob and
-// httpMetadata as Headers; delete() takes a list of keys; list() pages with limit and
-// cursor, groups by delimiter and returns metadata only when `include` asks for it.
-// Earlier dates keep the synchronous shim below.
+// R2 from compatibility date 2026-10-26: workerd's surface (Promises, MD5 etags with `checksums.md5`, `range`/`onlyIf`,
+// ReadableStream and Blob put, list-of-keys delete, paged list with delimiters). Earlier dates keep the synchronous
+// shim below; objects written earlier keep their sha256 etag.
 function __sbR2Strict() {
   return __sbCompatDate() >= "2026-10-26";
 }
@@ -11349,10 +11175,9 @@ function __sbMakeR2(name) {
   };
 }
 
-// Asset rules use the same parsed manifest in both transports. Redirect matching mirrors
-// @sproutboat/assets (Cloudflare's `_redirects` rules: the whole path must match, so a trailing
-// slash is significant; `:name` is one or more characters up to the next "/"; one `*` is
-// `:splat`; a static rule beats a dynamic one); parity tests cover the portable implementation.
+// Asset rules use the same parsed manifest in both transports. Redirect matching mirrors @sproutboat/assets (Cloudflare's
+// `_redirects` rules: the whole path must match, `:name` is one or more characters up to the next "/", a static rule
+// beats a dynamic one); parity tests cover the portable implementation.
 function __sbRuleAlpha(code) {
   return (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
 }
@@ -11520,32 +11345,15 @@ function __sbAssetResponse(path, r, inm) {
   return __sbRawBodyResponse(body, { status: r.status || (r.found ? 200 : 404), headers });
 }
 
-// Installed only when the project declares bindings. `env` is the module-scoped
-// object from compile.ts (a `const`, but mutable); we add the binding accessors
-// to it in place. compile.ts emits `__sbInstallBindings(env, {...})` right after
-// the `const env = {...}` line.
-// Queues from compatibility date 2026-10-31, as Cloudflare documents them:
-// - send() and sendBatch() return Promises of { metadata: { metrics } } (the queue's backlog
-//   after the send) and check their arguments with workerd's errors: a body over 128 KiB, an
-//   empty batch, more than 100 messages or 256 KiB, a batch that isn't iterable;
-// - bodies keep their content type: "json" (the default), "text", "bytes" or "v8" (structured
-//   clone, with the Durable Object storage codec), so a string that looks like JSON arrives as
-//   the same string;
-// - a message is { id, timestamp (a Date: when it was sent), body, attempts } with ack() and
-//   retry({ delaySeconds }) on its prototype; the first of ack() and retry() wins, as a
-//   message's own call wins over ackAll() and retryAll(); a batch has queue (the queue's name),
-//   messages and metadata;
-// - by default a message is retried at once, 3 times, then dropped (or moved to the dead
-//   letter queue); earlier dates wait 5 s and try 5 times.
-// The queue name and consumer settings (bindings.queueConfig, from `queues` in
-// sproutboat.jsonc) apply at every date: they are opt-in.
+// Installed only when the project declares bindings. It adds the binding accessors in place to the module-scoped `env`
+// from compile.ts. Queues from compatibility date 2026-10-31 follow Cloudflare's docs (workerd's argument errors, content
+// types, message shape, retry defaults); earlier dates retry after 5 s, 5 times. Queue name and consumer settings apply at every date.
 function __sbQueuesStrict() {
   return __sbCompatDate() >= "2026-10-31";
 }
-// From 2026-11-05: the v8 codec keeps shared and circular references, array holes and invalid
-// dates; arguments are checked as workerd checks them; delaySeconds is limited to a day; a
-// delivery that never came back counts as a retry (to the dead letter queue after max_retries);
-// a consumer that runs past the lease keeps its messages.
+// From 2026-11-05: the v8 codec keeps shared and circular references, holes and invalid dates; arguments are checked as
+// workerd checks them; delaySeconds is limited to a day; a delivery that never came back counts as a retry; a consumer
+// that runs past the lease keeps its messages.
 function __sbQueuesFixed() {
   return __sbCompatDate() >= "2026-11-05";
 }
@@ -11643,11 +11451,9 @@ function __sbQueueDecode(raw) {
 }
 
 /* oxlint-disable anti-slop/no-runtime-typeof -- structured clone branches on the value's type, as the HTML spec's StructuredSerialize does. */
-// The v8 content type from 2026-11-05: __sbDOPack's JSON, plus references. Every object is
-// numbered when first met (before its contents); meeting it again is ["@", n], which makes
-// shared and circular values come back shared and circular. An array is ["A", length, ...] with
-// ["H"] for a hole; an invalid Date is ["D", "NaN"]. Typed arrays other than Uint8Array and
-// DataView stay unsupported (see __sbDOView).
+// The v8 content type from 2026-11-05: __sbDOPack's JSON plus references. Each object is numbered when first met, and
+// meeting it again is ["@", n], so shared and circular values round-trip. ["A", length, ...] with ["H"] for a hole;
+// ["D", "NaN"] for an invalid Date. Typed arrays other than Uint8Array and DataView stay unsupported (see __sbDOView).
 function __sbQV8Pack(v, objs) {
   if (v === null || v === true || v === false || __sbIsStr(v)) return v;
   const t = typeof v;
@@ -11853,10 +11659,8 @@ globalThis.__sbInstallBindings = function (target, bindings) {
   for (let i = 0; i < (bindings.kv || []).length; i++) {
     const ns = bindings.kv[i];
     target[ns] = __sbKvStrict() ? __sbMakeKv(ns) : {
-      // #233 — Workers' get(key, type | { type }): "text" (default), "json",
-      // "arrayBuffer". A value put as bytes is stored one char per byte and
-      // flagged, so text decodes it as UTF-8 and arrayBuffer returns it
-      // exactly; a text value read as arrayBuffer is its UTF-8 encoding.
+      // #233: Workers' get(key, type | { type }). A value put as bytes is stored one char per byte and flagged, so text
+      // decodes it as UTF-8 and arrayBuffer returns it exactly; a text value read as arrayBuffer is its UTF-8 encoding.
       get(key, typeOrOptions) {
         const r = __sbRpc("kv.get", { ns, key: String(key) });
         if (!r.found) return null;
@@ -11890,10 +11694,8 @@ globalThis.__sbInstallBindings = function (target, bindings) {
 
   for (let i = 0; i < (bindings.secrets || []).length; i++) {
     const name = bindings.secrets[i];
-    // Fetch lazily, then freeze as a data property: a secret is process-lifetime
-    // immutable (a new value means a redeploy = a new process), so one broker
-    // round-trip on first read, zero after. A getter that RPCs on every access
-    // turns `'Bearer ' + env.KEY` in a loop into a syscall storm.
+    // Fetch lazily, then freeze as a data property: a secret is immutable for the process lifetime (a new value is a
+    // redeploy), and a getter that RPCs on every access turns `'Bearer ' + env.KEY` in a loop into a syscall storm.
     Object.defineProperty(target, name, {
       configurable: true,
       get() {
@@ -12047,11 +11849,8 @@ globalThis.__sbInstallBindings = function (target, bindings) {
     target[b.binding] = __sbMakeDONamespace(b.binding, b.className);
   }
 
-  // #69 — env.<NAME>.limit({ key }) -> { success, resetAt }. Fixed window: at
-  // most `limit` calls per `period` seconds for a given key. limit/period
-  // travel in the message so the op stays stateless (the transport has no
-  // config). `resetAt` is epoch ms when the window rolls and the count clears,
-  // so a 429 can send `Retry-After: ceil((resetAt - Date.now()) / 1000)`.
+  // #69: env.<NAME>.limit({ key }) -> { success, resetAt }, a fixed window of `limit` calls per `period` seconds. Both
+  // travel in the message so the op stays stateless; `resetAt` is epoch ms, for Retry-After.
   // Returns sync like the other shims (CF's is a Promise; the runtime is sync).
   for (let i = 0; i < (bindings.ratelimiters || []).length; i++) {
     const rl = bindings.ratelimiters[i];
@@ -12064,10 +11863,8 @@ globalThis.__sbInstallBindings = function (target, bindings) {
     };
   }
 
-  // Static assets: env.<ASSETS>.fetch(request) -> broker `assets.get`. The edge
-  // already serves matching files directly; the sprout only calls this for paths
-  // it wants to own (SPA fallback, auth-gated files). The transport keeps the
-  // body byte-preserving for binary assets.
+  // Static assets: env.<ASSETS>.fetch(request) -> broker `assets.get`. The edge already serves matching files; the sprout
+  // only calls this for paths it wants to own (SPA fallback, auth-gated files). The transport keeps binary bodies byte-preserving.
   if (bindings.assets) {
     target[bindings.assets] = {
       fetch(input, init) {
@@ -12082,13 +11879,9 @@ globalThis.__sbInstallBindings = function (target, bindings) {
     };
   }
 
-  // #48 — worker-to-worker. Same wire shape as outbound fetch, but the broker
-  // resolves the target itself and forwards it internally, so this is not
-  // egress and is not subject to the private-address block. From compatibility date
-  // 2026-10-22 a promise, as in Workers: on an async host the caller keeps serving
-  // while the call runs, which is also what lets a deployment call itself without
-  // deadlocking. Before it, the Response comes back at once, as it always did, so a
-  // handler that uses it without awaiting keeps working.
+  // #48: worker-to-worker. The broker resolves the target itself, so this is not egress and skips the private-address
+  // block. From compatibility date 2026-10-22 it returns a promise, as in Workers, so a deployment can call itself
+  // without deadlocking; before it the Response comes back at once and handlers that never await keep working.
   for (let i = 0; i < (bindings.services || []).length; i++) {
     const binding = bindings.services[i].binding;
     const fetcher = {
@@ -12154,13 +11947,9 @@ function __sbRemoteError(marker) {
   return error;
 }
 
-// Workers RPC (cloudflare:workers). A service binding's methods other than fetch() call
-// the callee's WorkerEntrypoint: env.SVC.add(1, 2) runs `add(1, 2)` on an instance of
-// the callee's default export and resolves to what it returns. The call travels as a
-// service-binding request the platform's edge vouched for (x-sb-rpc names the method),
-// so no client can invoke a method. Arguments and results are copied as structured
-// clone does (__sbRpcEncode); functions and RPC stubs are not supported yet. An error
-// the method throws rejects the call with the same class and message, as fetch does.
+// Workers RPC (cloudflare:workers): a service binding's non-fetch methods call the callee's WorkerEntrypoint. The call is a
+// service-binding request the edge vouched for (x-sb-rpc names the method), so no client can invoke a method. Arguments and
+// results are structured-cloned (__sbRpcEncode); functions and stubs are unsupported; a throw rejects with the same class and message.
 if (globalThis.WorkerEntrypoint == null) {
   class WorkerEntrypoint {
     constructor(ctx, env) {
@@ -12307,12 +12096,9 @@ async function __sbRpcDispatch(handlers, receiver, method, request) {
   });
 }
 
-// fetch(input, init) as Fetch reads it: a Request's method, headers, body, redirect mode
-// and signal apply unless init overrides them; a URL object stands for its href.
-// From compatibility date 2026-10-23 it is Fetch's own first step, `new Request(input,
-// init)`, as in workerd: the input Request's body is used up (a second fetch of it
-// throws), a Request given as init brings its body, GET and HEAD refuse a body, and the
-// method and redirect mode are checked. Before it, the parts are read off the input.
+// fetch(input, init) as Fetch reads it. From compatibility date 2026-10-23 it is `new Request(input, init)` as the first
+// step, as in workerd: the input Request's body is used up, GET and HEAD refuse a body, method and redirect mode are
+// checked. Before it, the parts are read off the input.
 function __sbFetchParts(input, init) {
   if (__sbCompatDate() >= "2026-10-23") {
     const request = new Request(input, init);
@@ -12376,17 +12162,9 @@ function __sbUpstreamResponse(r) {
   return __sbFreezeHeaders(response);
 }
 
-// A streamed upstream response (from compatibility date 2026-10-22, with the other
-// asynchronous fetch() behaviour; body is a stream from 2026-10-21 anyway): the call resolves as soon as the head arrives, and the body is a
-// ReadableStream fed chunk by chunk as the broker passes them on. Each frame fires the
-// same callback, so it is an interval that the last frame clears. A reply that comes
-// whole (a broker from before streaming, or sproutd's embedded transport) is handled
-// as before. Cancelling the body, or the signal, drops the exchange, which stops the
-// upstream request.
-// Streamed request bodies, from compatibility date 2026-10-27, on a transport that sends
-// them in frames (the broker's, on an async host, against a broker that takes them):
-// fetch() and service bindings send a ReadableStream body as it is read, instead of
-// reading it to the end first. As in workerd, a streamed body can't follow a 307 or 308.
+// A streamed upstream response (compatibility date 2026-10-22): the call resolves at the head and the body is a ReadableStream
+// fed per frame (each fires the same callback, an interval the last frame clears); a whole reply is handled as before. Cancelling
+// drops the exchange. Streamed request bodies (2026-10-27) are sent as read and, as in workerd, can't follow a 307 or 308.
 function __sbStreamsBody(body) {
   return (
     body instanceof ReadableStream &&
@@ -12504,12 +12282,9 @@ function __sbUpstreamStreamed(op, msg, label, signal) {
   });
 }
 
-// Fetch's redirect handling, from compatibility date 2026-10-22 (before it, a 3xx came
-// back as it was, whatever the mode). "follow" sends the request again to the new
-// location, up to 20 times; each hop goes back through the broker, so outbound hops
-// are vetted like the first. A 303, or a 301/302 to a POST, becomes a bodiless GET;
-// a hop to another origin drops Authorization. A service binding follows through
-// the same binding, as in workerd. "error" rejects; "manual" returns the 3xx.
+// Fetch's redirect handling, from compatibility date 2026-10-22 (before it a 3xx came back as it was). "follow" retries up
+// to 20 times, each hop through the broker so outbound hops are vetted; 303, or 301/302 to a POST, becomes a bodiless GET;
+// another origin drops Authorization; a service binding follows through the same binding. "error" rejects, "manual" returns the 3xx.
 function __sbFetchFollowing(op, msg, label, mode, signal) {
   return __sbFollowHop(op, msg, label, mode, signal, 0);
 }
@@ -12542,16 +12317,9 @@ function __sbFollowHop(op, msg, label, mode, signal, hops) {
   return out instanceof Promise ? out.then(step) : step(out);
 }
 
-// Sends `msg` as `op` and answers with the Response: at once on a synchronous
-// transport, or (B18) as a promise when the host runs requests off its event loop.
-// The reply fires a timer that never fires on its own; the timer table keeps the
-// callback alive until then. An aborted `signal` rejects with its reason and cancels
-// the exchange, which closes its broker connection: the broker stops the upstream
-// request, and the edge in turn stops the callee's.
-// Promises from compatibility date 2026-10-22. Before it, a transport that always
-// answered at once (the broker's) still does, so handlers that use fetch()'s result
-// without awaiting keep working; sproutd's answered with promises at any date
-// (__sbAsyncAtAnyDate). `always` is for RPC, which has no older behaviour to keep.
+// Sends `msg` as `op` and answers with the Response: at once on a synchronous transport, or (B18) as a promise when the
+// host runs requests off its event loop. An aborted `signal` rejects with its reason and closes the broker connection,
+// which stops the upstream request. Promises from 2026-10-22; sproutd's answered with promises at any date (__sbAsyncAtAnyDate).
 function __sbUpstream(op, msg, label, signal, always) {
   // After a commit the host has not had confirmed, nothing leaves the worker (design 029 S3, Cloudflare's output gate).
   if (__sbGateActive && __sbGateRaw("b") === "1") return __sbGateWait(signal).then(() => __sbUpstreamNow(op, msg, label, signal, always));
@@ -12562,10 +12330,9 @@ function __sbUpstreamNow(op, msg, label, signal, always) {
   const promised = always || __sbCompatDate() >= "2026-10-22" || __sbAsyncAtAnyDate();
   if (!promised) return __sbUpstreamResponse(globalThis.__sbFetchUpstream(op, msg));
   if (!__sbHttpAsyncEnabled()) {
-    // A host that runs the exchange to the end before it returns (the standalone binary) still hands
-    // back a promise from 2026-10-22: fetch(url).then(...) is how most libraries call it, and a refusal
-    // rejects instead of throwing. Earlier dates keep the Response (the embedded transport's
-    // __sbAsyncAtAnyDate is true for sproutd's sake, not for this).
+    // A host that runs the exchange to the end (the standalone binary) still returns a promise from 2026-10-22, because
+    // fetch(url).then(...) is how libraries call it and a refusal rejects instead of throwing. Earlier dates keep the
+    // Response (__sbAsyncAtAnyDate is true for sproutd's sake, not for this).
     if (!always && __sbCompatDate() < "2026-10-22") return __sbUpstreamResponse(globalThis.__sbFetchUpstream(op, msg));
     try {
       return Promise.resolve(__sbUpstreamResponse(globalThis.__sbFetchUpstream(op, msg)));
@@ -12607,10 +12374,8 @@ function __sbUpstreamNow(op, msg, label, signal, always) {
   });
 }
 
-// fetch() reaches any public address; the transport refuses private and
-// reserved ones at connect (baronunread/sproutboat#174). No config, like a
-// Worker's fetch. Installed by the generated module (wrap.ts), not here: the
-// prelude must not replace fetch just by being evaluated.
+// fetch() reaches any public address; the transport refuses private and reserved ones at connect (baronunread/sproutboat#174).
+// Installed by the generated module (wrap.ts), not here: the prelude must not replace fetch just by being evaluated.
 globalThis.__sbInstallFetch = function () {
   __sbIngressStreamingSetup();
   __sbInstallWebSockets();
@@ -12661,17 +12426,9 @@ globalThis.__sbInstallFetch = function () {
   };
 };
 
-// ---------------------------------------------------------------------------
-// Durable Objects. The class runs here in the sandboxed sprout. There is exactly
-// one sprout process per deployment (the supervisor model), so one instance per
-// id: `env.<NS>.get(id).fetch()` invokes the instance directly, no round-trip.
-// Events still interleave at every await; from 2026-10-28 an input gate (below,
-// __sbDOEnter) keeps them out while a storage read is in flight, as in workerd.
-// Only `state.storage.*` goes to the broker (so object state outlives a sprout
-// restart), scoped to (class, id).
-// One instance per id relies on one worker owning the app's storage: the embedded transport takes an app-wide
-// flock before an instance is built (SB_OWNER_LOCK, see __sbOwnerAcquire there). The broker transport has one
-// sprout process per deployment; a multi-sprout deployment needs the broker to hold a per-id lock (cloud).
+// Durable Objects run in the sandboxed sprout: one process per deployment, so one instance per id and `get(id).fetch()` invokes
+// it directly; only `state.storage.*` goes to the broker, scoped to (class, id). One instance per id relies on one worker owning the
+// app's storage: the embedded transport takes an app-wide flock (SB_OWNER_LOCK); a multi-sprout deployment would need a per-id broker lock.
 
 function __sbMakeDONamespace(binding, className) {
   if (__sbDOv2()) return __sbMakeDONamespaceV2(className);
@@ -12735,27 +12492,9 @@ function __sbMakeDONamespace(binding, className) {
   };
 }
 
-// From compatibility date 2026-10-29 Durable Objects also match workerd in these ways:
-//
-// - Ids are 64 hex digits. The first 48 are the object's (a SHA-256 of the class and the
-//   name for idFromName, random for newUniqueId); the last 16 are a SHA-256 of the class
-//   and those 48, so idFromString refuses an id made for another class, as workerd does.
-//   An id has equals() and, from idFromName, its name. The format is part of storage (it
-//   is the object's storage scope), so it must never change.
-// - Storage written under an earlier date's "name:NAME" id moves to the 64-hex id the
-//   first time this process creates the object, and idFromString still accepts the old
-//   "name:" and "uid:" strings, so moving an app's date loses no data.
-// - namespace.getByName(name), and stub.id and stub.name.
-// - RPC: every other method of a stub calls the object's method of that name (any
-//   method its class defines, not instance properties), through the input gate. The
-//   arguments and the result are copied with the storage codec (__sbDOPack), so the
-//   object never shares a value with its caller; a function becomes a callback that
-//   runs the original, as workerd's stubs do. A getter is read with `await stub.prop`.
-//   A throw rejects the call with the original error.
-// - stub.fetch() rejects with the object's exception instead of resolving to a 500.
-//
-// The object runs in this sprout on every transport (see above), so an RPC call is a
-// direct call; only its storage goes to the broker.
+// From compatibility date 2026-10-29 Durable Object ids are 64 hex digits: 48 for the object (SHA-256 of class and name, or
+// random), 16 a SHA-256 of class and those 48, so idFromString refuses another class's id. The format is the storage scope:
+// never change it. Storage under an earlier "name:NAME" id moves on first creation; the old "name:"/"uid:" strings still parse.
 function __sbDOv2() {
   return __sbCompatDate() >= "2026-10-29";
 }
@@ -13028,10 +12767,8 @@ function __sbGetDOInstance(cls, idText, idObj) {
   if (!inst) {
     if (__sbIsFn(globalThis.__sbOwnerAcquire)) globalThis.__sbOwnerAcquire();
     if (stateId !== null && stateId.name !== undefined) __sbDOAdopt(cls, "name:" + stateId.name, id);
-    // #57 — was a no-op: a DO calling `state.waitUntil(p)` had `p` vanish with
-    // no error. The instance outlives any one call (cached in
-    // `__sbDOInstances`), so the queue lives on `state` too and is drained by
-    // whichever call site invoked `fetch`/`alarm` this turn.
+    // #57: `state.waitUntil(p)` was a no-op and `p` vanished silently. The instance outlives any one call, so the queue
+    // lives on `state` and the call site that invoked fetch/alarm this turn drains it.
     const __sbTasks = [];
     const gate = __sbDOMakeGate();
     const state = {
@@ -13102,22 +12839,9 @@ function __sbGetDOInstance(cls, idText, idObj) {
   return inst;
 }
 
-// ---------------------------------------------------------------------------
-// Durable Object lifecycle (design 07 stage 1c, plan 018), from compatibility date 2026-11-21: an idle object
-// leaves memory and is constructed again by its next event, so one app can hold one object per customer.
-//
-// A record per object in a worker (not the bare instance): { cls, id, key, inst, state, gate, holder, tasks, busy,
-// pins, last, dead, prev, next, ... }. `busy` counts the events that entered through __sbDORun and have not
-// finished, their waitUntil drain included; `pins` counts things that outlive an event and cannot be rebuilt (a pending
-// timer, an unawaited fetch, a streamed response); open plain sockets are checked when idleness is. The records are one
-// least-recently-idle list (`head` the stalest). An object is evicted only when __sbDOIsIdle says so, in one synchronous
-// turn (__sbDOEvict): nothing in it awaits. Before the date nothing here runs and every object stays resident.
-//
-// Settings (environment; sproutd sets them from `limits ID do-idle-ms|objects|do-wait-ms`):
-//   SB_DO_IDLE_MS  how long an object sits idle before it leaves, 100 to 600000 (default 10000; 0 turns idle eviction off)
-//   SB_DO_MAX      most objects in memory in this worker (default 16 per MiB of SB_MEMORY_LIMIT, 64 to 4096; 4096 with no limit)
-//   SB_DO_WAIT_MS  how long an object's first event waits for a slot at the cap before it fails alone (default 5000)
-//   SB_DO_QUEUE_MAX  most events queued behind one object's input gate (default 1024)
+// Durable Object lifecycle (design 07 stage 1c, plan 018), from compatibility date 2026-11-21: an idle object leaves memory and the
+// next event constructs it again. A record per object ({ cls, id, inst, state, gate, busy, pins, ... }) in one least-recently-idle
+// list; `pins` counts what outlives an event and cannot be rebuilt. Eviction is one synchronous turn, only when __sbDOIsIdle says so.
 const __SB_DO_EVICT_DATE = "2026-11-21";
 const __sbDOCtxKey = {};
 let __sbDOL = null;
@@ -13365,10 +13089,8 @@ function __sbDOStalest(L) {
   return null;
 }
 
-// The sweep: idle objects older than the timeout leave, from the stale end of the list. Bounded twice: `limit` records are looked at and at
-// most `most` leave, because an eviction closes a SQLite handle (a checkpoint and its fsyncs, about a millisecond) and the whole sweep is one
-// synchronous turn: 500 objects going at once would stop every request for half a second or more (measured: p99 1.9 s in an alarm storm).
-// What is left goes on the next tick; the cap evicts one object at a time when a slot is needed in the meantime.
+// The sweep evicts idle objects from the stale end, bounded by `limit` looked at and `most` evicted: an eviction closes a
+// SQLite handle (~1 ms) in one synchronous turn, and 500 at once stopped every request for 0.5 s or more (p99 1.9 s in an alarm storm).
 function __sbDOSweep(L, limit, most) {
   if (L.idle === 0) return;
   const now = Date.now();
@@ -13624,9 +13346,8 @@ function __sbDOBuild(L, cls, id, stateId, key) {
 }
 
 // ---- run an event: the one entry for RPC, stub.fetch, alarms and socket events ----
-// `run(inst)` is the event; it enters the object's gate and runs in a frame that names the object. The returned promise settles with
-// the event's value. The object counts as busy until the event and the drain of its waitUntil tasks have settled (`wait`: the
-// returned promise waits for that drain too).
+// `run(inst)` enters the object's gate and runs in a frame that names the object; the object is busy until the event and
+// the drain of its waitUntil tasks have settled (`wait`).
 function __sbDORun(cls, idText, idObj, run, wait) {
   let acquired;
   try {
@@ -13851,24 +13572,9 @@ function __sbDOStorage(cls, id) {
 }
 
 
-// From compatibility date 2026-10-28 Durable Objects behave like workerd's in three ways:
-//
-// - Input gate. While a storage read is in flight, no other event (stub.fetch(), an alarm)
-//   enters the object; the reader's continuation runs first. Reads here are synchronous, so
-//   the gate stays shut until the next timer turn, by which point every microtask the read
-//   woke (the reader's code up to its next real await) has run. So
-//   `const v = await storage.get("n"); await storage.put("n", v + 1)` is safe under
-//   concurrent calls; it used to lose updates (10 concurrent increments ended at 1). An
-//   event that awaits anything else (fetch, a timer) lets the next one in, as in workerd.
-//   blockConcurrencyWhile() and transaction() shut it until they settle.
-// - Storage methods return Promises.
-// - Values are structured-cloned (Date, Map, Set, RegExp, ArrayBuffer and views, BigInt,
-//   undefined inside containers, NaN and the infinities), not JSON: put(k, undefined) and
-//   functions throw, and list() takes start, startAfter, end and reverse.
-//
-// Before that date storage is synchronous JSON and events interleave at every await.
-// Values written in the new format start with __sbDOTag (no JSON text starts with "#"),
-// so either side reads both.
+// From compatibility date 2026-10-28 an input gate keeps other events out while a storage read is in flight, so
+// `await storage.get("n"); await storage.put("n", v + 1)` no longer loses updates (10 increments ended at 1). Storage returns Promises
+// and structured-clones values; before the date it is synchronous JSON. New values start with __sbDOTag, so either side reads both.
 function __sbDOGated() {
   return __sbCompatDate() >= "2026-10-28";
 }
@@ -13913,13 +13619,9 @@ function __sbDOEnter(gate, run) {
   });
 }
 
-// alarm(alarmInfo) from compatibility date 2026-11-04: { retryCount, isRetry }, as workerd
-// passes it. retryCount counts the runs of this alarm that threw or rejected. The three hosts
-// that deliver alarms (the broker, the embedded timer, sproutd) all end up in this prelude, so
-// the count lives here, on the object's instance and per scheduled time; it starts over when the alarm is set
-// for a new time or a run succeeds, and a host that knows its own count passes it as
-// attempts. A prelude that restarts between two runs counts from zero again.
-// (kept on the instance, as __sbAlarmAt and __sbAlarmFails)
+// alarm(alarmInfo) from compatibility date 2026-11-04: { retryCount, isRetry }, as workerd. The three hosts that deliver
+// alarms all end up in this prelude, so the count lives on the instance per scheduled time (__sbAlarmAt, __sbAlarmFails);
+// it resets for a new time or a success, a host that knows its own count passes `attempts`, and a prelude restart counts from zero.
 function __sbDOAlarmCall(inst, cls, id, at, attempts) {
   if (__sbCompatDate() < "2026-11-04") return inst.alarm();
   // From the eviction date the count is the delivery row's (or the host's), never the instance's: the instance can be gone
@@ -13985,10 +13687,8 @@ function __sbDOView(name, bytes) {
 // A value as JSON: null, booleans, strings and finite numbers are themselves; everything
 // else is an array whose first element names its type, so no plain value is ambiguous.
 /* oxlint-disable anti-slop/no-runtime-typeof -- structured clone branches on the value's type, as the HTML spec's StructuredSerialize does. */
-// fns (RPC only): functions go there, packed as ["F", index]; storage passes none.
-// refs (storage, 2026-11-04): an object met again is ["X", n], n its place in first-seen order, so
-// shared and circular references survive as structured clone keeps them; without it a circular
-// value throws and a shared one is copied.
+// fns (RPC only): functions go there, packed as ["F", index]. refs (storage, 2026-11-04): an object met again is ["X", n],
+// so shared and circular references survive as structured clone keeps them; without it a circular value throws.
 function __sbDOPack(v, seen, fns, refs) {
   if (v === null || v === true || v === false || __sbIsStr(v)) return v;
   const t = typeof v;
@@ -14357,12 +14057,9 @@ function __sbDOAsyncStorage(cls, id, gate, rec) {
   return storage;
 }
 
-// ctx.storage.sql from compatibility date 2026-10-29: the object's own SQLite database
-// (transport op "do.sql", one file per object). exec() runs one statement at once and returns
-// a cursor over its rows: toArray(), one(), raw(), next() and iteration, columnNames,
-// rowsRead and rowsWritten. BLOBs come back as ArrayBuffers. Transactions go through
-// transactionSync() (a savepoint), so BEGIN and SAVEPOINT are refused, as in workerd.
-// Every class gets it here: sproutboat.jsonc has no new_sqlite_classes switch.
+// ctx.storage.sql from compatibility date 2026-10-29: the object's own SQLite database (transport op "do.sql", one file
+// per object). Transactions go through transactionSync() (a savepoint), so BEGIN and SAVEPOINT are refused, as in workerd.
+// Every class gets it: sproutboat.jsonc has no new_sqlite_classes switch.
 const __sbDOSqlTxnError =
   "To execute a transaction, please use the state.storage.transaction() or state.storage.transactionSync() APIs " +
   "instead of the SQL BEGIN TRANSACTION or SAVEPOINT statements. The JavaScript API is safer because it will " +
@@ -14391,11 +14088,9 @@ function __sbDOSqlVerb(q) {
   return q.slice(i, j).toUpperCase();
 }
 
-// exec() with several statements (compatibility date 2026-11-04). Splits the text at the
-// semicolons SQLite would, past quoted names and strings, comments, and the BEGIN ... END body
-// of CREATE TRIGGER. Statements with nothing in them but spaces and comments are dropped.
-// Returns { texts, params }: the statements' text, and for each 1 when it has a ? or a
-// :name, @name or $name outside quotes (which only the last statement may have), else 0.
+// exec() with several statements (compatibility date 2026-11-04): splits at the semicolons SQLite would, past quotes,
+// comments and CREATE TRIGGER bodies, and drops empty statements. Returns { texts, params }, params being 1 where a
+// statement has a ?, :name, @name or $name outside quotes (only the last may), else 0.
 function __sbDOSqlSplit(q) {
   const texts = [];
   const params = [];
@@ -14673,13 +14368,9 @@ function __sbDOCursor(r) {
   return cursor;
 }
 
-// storage.transaction(fn): fn gets a txn with the storage methods; its writes stay in
-// memory (read back by its own get and list) and are written when fn resolves, unless it
-// threw or called txn.rollback(). The input gate stays shut meanwhile, so no other event
-// sees a half-written transaction.
-// From 2026-11-04 transactions on one object run one after another, so two that read, then
-// write the same key (a counter) do not lose an update; workerd gets that by retrying the loser.
-// A transaction() started inside another one waits for it, so it must not be awaited there.
+// storage.transaction(fn): writes stay in memory until fn resolves, unless it threw or called txn.rollback(); the input
+// gate stays shut meanwhile. From 2026-11-04 transactions on one object run one after another (workerd retries the loser
+// instead), so a counter does not lose an update. One started inside another waits for it, so it must not be awaited there.
 function __sbDOTransaction(cls, id, s, gate, fn) {
   if (!__sbDOv3()) return __sbDOTransactionRun(cls, id, s, gate, fn);
   if (!gate.txnBusy) {
@@ -14860,16 +14551,12 @@ function __sbDOTransactionRun(cls, id, s, gate, fn) {
 }
 
 // ---------------------------------------------------------------------------
-// Trigger dispatch. The compiled server only ever calls `fetch(request)`; this
-// routes the internal `x-sb-trigger` requests (sent by the broker, authenticated
-// with SB_BROKER_TOKEN) to the right user handler, and everything else to
-// `handlers.fetch`.
+// Trigger dispatch: the compiled server only calls `fetch(request)`; internal `x-sb-trigger` requests (from the broker,
+// authenticated with SB_BROKER_TOKEN) go to the right handler, everything else to `handlers.fetch`.
 
 // ---- the acknowledgement gate, worker side (design 029 S3) ----
-// The reply, the WebSocket messages and the streamed bodies are held by the host (every frame leaves with the commit counter). What
-// the host cannot hold is a call the worker makes itself, so it waits here: it asks the host to have the store confirm what is
-// committed so far (a note), and polls the confirmed counter the host writes. A call that is not confirmed in 30 s is not made and
-// rejects. Standalone (no host) and the older compatibility dates never get here: the gate is off.
+// The host holds the reply, WebSocket messages and streamed bodies, but not a call the worker makes itself: that waits for the store to
+// confirm what is committed (a note, then polling the host's counter) and is not made after 30 s. Standalone and older dates: gate off.
 let __sbGateTestAt = 0;
 const __sbGateWaitMs = 30000;
 // What a storage call that passed allowUnconfirmed runs inside: its commit does not move the counter the host waits for.
@@ -14913,11 +14600,9 @@ function __sbGateSync() {
 globalThis.__sbGateSeq = () => Number(__sbGateRaw("p"));
 globalThis.__sbGateConfirmed = () => Number(__sbGateRaw("c"));
 
-// B22: a note to the host that runs this worker. Only sproutd's worker host takes notes
-// (its bridge sets sb_host_note_hook); everywhere else the hook is null and this returns
-// false. sproutd delivers cron, queue and alarm triggers itself, waking a reaped app for
-// them, so the notes tell it what to wake the app for: its crons, and when queued messages
-// or alarms fall due.
+// B22: a note to the host running this worker. Only sproutd's worker host takes notes (its bridge sets sb_host_note_hook);
+// elsewhere the hook is null and this returns false. sproutd delivers cron, queue and alarm triggers itself and wakes a
+// reaped app for them, so the notes say when.
 // oxlint-disable-next-line no-unused-vars -- `text` is read inside the RawC block below, not by JS.
 function __sbHostNote(text) {
   let out = "";
@@ -14959,30 +14644,16 @@ function __sbEnv(name) {
 
 function __sbTriggerAuthed(request) {
   const want = __sbEnv("SB_BROKER_TOKEN");
-  // No token configured means no caller can be trusted to send one, so refuse
-  // rather than wave the request through. Every path that legitimately delivers
-  // a trigger over HTTP sets SB_BROKER_TOKEN — the supervisor per deployment,
-  // `sproutboat dev`, the standalone launcher. The one build that has no token
-  // is the embedded binary (#15), which fires its own triggers in-process and
-  // is also the one most likely to be listening on a public interface: exactly
-  // where "anyone may invoke scheduled()" would be a hole.
+  // No token configured means no caller can be trusted to send one, so refuse rather than wave the request through. Every
+  // HTTP trigger path sets SB_BROKER_TOKEN; the embedded binary (#15) has none, fires its own in-process, and is the build
+  // most likely on a public interface, exactly where "anyone may invoke scheduled()" would be a hole.
   if (!want) return false;
   return request.headers.get("x-sb-token") === want;
 }
 
-// #163 — the connection's remote address, for `request.cf.clientIp`.
-//
-// `x-sb-remote-addr` is the TCP peer, appended by the server (see
-// https://github.com/baronunread/sproutboat/blob/main/patches/upstream/remote-address.md)
-// and stripped from anything a client sends, so it
-// cannot be forged. With no proxy in front, that is the client. Behind one, set
-// `SB_TRUSTED_PROXIES` to a comma-separated list of trusted CIDRs (or bare IPs):
-// when the peer is trusted, the client is the rightmost `x-forwarded-for` entry
-// that is not itself a trusted hop.
-//
-// ponytail: IPv4 CIDR ranges + exact-string match (which covers a bare IPv6).
-// An IPv6 *prefix* in SB_TRUSTED_PROXIES matches nothing — widen __sbIpInCidr if
-// a deployment ever fronts its sprout with an IPv6 proxy range.
+// #163: the connection's remote address for `request.cf.clientIp`. `x-sb-remote-addr` is the TCP peer, set by the server and stripped
+// from client input, so it cannot be forged. Behind a proxy set `SB_TRUSTED_PROXIES` (CIDRs or IPs): the client is then the
+// rightmost `x-forwarded-for` entry that is not a trusted hop. ponytail: IPv4 CIDR + exact match only; an IPv6 prefix matches nothing.
 function __sbParseHex(s) {
   let n = 0;
   for (let i = 0; i < s.length; i++) {
@@ -14996,11 +14667,8 @@ function __sbParseHex(s) {
   }
   return n;
 }
-// uWS hands back IPv4-mapped IPv6 for IPv4 clients on a dual-stack socket
-// (`::ffff:1.2.3.4`, or fully expanded `0:0:0:0:0:ffff:0102:0304`). Fold those
-// to the dotted IPv4 so CIDR matching and `clientIp` see a plain address.
-// The last address folded and its result: a client keeps the same address from one request to the
-// next, and folding an IPv6 text costs a lowercase, a split and eight hex parses.
+// uWS gives IPv4 clients on a dual-stack socket as IPv4-mapped IPv6 (`::ffff:1.2.3.4`); fold them to dotted IPv4 so CIDR
+// matching and `clientIp` see a plain address. The last fold is cached: a client repeats its address, and folding costs a lowercase, a split and eight hex parses.
 let __sbIpRaw = "";
 let __sbIpFolded = "";
 function __sbNormalizeIp(ip) {
@@ -15087,11 +14755,8 @@ function __sbClientIp(request) {
   }
   return peer;
 }
-// #128 — httpProtocol/tlsVersion/tlsCipher: only a trusted front proxy can set
-// these (an untrusted direct peer could otherwise fake any value), so this
-// reuses the same SB_TRUSTED_PROXIES chain #163 already resolves clientIp
-// against. Undefined when no trusted proxy is configured or it sent nothing —
-// omitted, not faked, matching how clientIp itself falls back to the raw peer.
+// #128: httpProtocol/tlsVersion/tlsCipher are only trusted from a front proxy in the SB_TRUSTED_PROXIES chain #163
+// resolves clientIp against (a direct peer could fake any value). Omitted, not faked, when there is none.
 function __sbTrustedProxyHeader(request, name) {
   const peer = __sbNormalizeIp(request.headers.get("x-sb-remote-addr") || "");
   const trusted = __sbSplitList(__sbEnv("SB_TRUSTED_PROXIES"));
@@ -15099,26 +14764,9 @@ function __sbTrustedProxyHeader(request, name) {
   return request.headers.get(name) || undefined;
 }
 
-// #57 — ctx.waitUntil: work that must run before the turn completes but must
-// not block the response the handler already built. `waitUntil(p)` just
-// records `p`; nothing awaits it until the handler itself has returned.
-//
-// The wall-clock cap #25 was meant to gate this on turned out not to apply:
-// #25 was per-tenant abuse control (rate limits, cgroup isolation against a
-// hostile *other* caller) and was closed as not-planned — this deployment
-// model is single-admin, nobody else's handler to isolate from. A drain that
-// never lets go of the worker slot is a local bug either way, so it gets its
-// own timeout rather than waiting on that. Kept under the edge's own
-// `SPROUTBOAT_REQUEST_TIMEOUT_MS` (30s default, services/edge/src/main.ts) so
-// the sprout still gets to answer before the edge gives up on it.
-//
-// ponytail: drained sequentially, one timeout for the whole batch (not one
-// per task — N tasks should not cost N timeouts). A task still running past
-// the cap keeps running; nothing here can cancel a promise it didn't create.
-// No Promise.all (unproven in this runtime, sequential is fine at this
-// volume). A rejected task is swallowed rather than failing the response:
-// dropping a background task's error beats dropping the response it doesn't
-// own.
+// #57: ctx.waitUntil records `p`; nothing awaits it until the handler has returned, so it never blocks the response. The drain has
+// its own timeout, under the edge's SPROUTBOAT_REQUEST_TIMEOUT_MS (30s), so the sprout still answers first (#25 was closed as
+// not-planned). ponytail: sequential, one timeout for the batch; a task past it keeps running; a rejected task is swallowed.
 const __SB_WAITUNTIL_TIMEOUT_MS = 25000;
 
 async function __sbDrainWaitUntil(tasks, logRec) {
@@ -15145,12 +14793,9 @@ async function __sbDrainAll(pending, logRec) {
   }
 }
 
-// Tail-called from `__sbEntry`/DO dispatch so the promise this returns is the
-// one *this* async function creates, not a `.then()` derived from someone
-// else's — see the note below on why that distinction matters here.
-// B19 (first step): a ReadableStream response body is read to the end and sent buffered;
-// the native writer had sent "[object ReadableStream]". Chunks must be bytes, as in workerd
-// (a string chunk is a TypeError), and the whole body is capped like a fetched one.
+// Tail-called from `__sbEntry`/DO dispatch so the promise returned is the one this async function creates, not a derived `.then()`.
+// B19 (first step): a ReadableStream response body is read to the end and sent buffered (the native writer had sent
+// "[object ReadableStream]"). Chunks must be bytes, as in workerd, and the body is capped like a fetched one.
 const __SB_STREAM_BODY_MAX = 32 * 1024 * 1024;
 async function __sbCollectBody(stream) {
   const reader = stream.getReader();
@@ -15186,13 +14831,9 @@ function __sbHasStreamBody(res) {
   return res != null && __sbRawBody(res) instanceof ReadableStream;
 }
 
-// B19: on a host that streams (a standalone sprout's native server defines sb_stream_*), a
-// stream body goes out as it is produced: the response is marked with the internal
-// x-sb-stream header, the native writer sends the status and headers and holds the
-// connection open, and each chunk is written as it arrives. Hosts that do not stream
-// (sproutd's workers, for now) link the weak fallbacks, report unsupported and keep buffering.
-// op: "s" supported, "o" open, "w" write data (a bytestring), "W" write the Uint8Array in data, "p" the bytes written
-// the client's connection has not taken yet, "k" park the timer in data until that falls, "e" end. Returns a short string.
+// B19: on a host that streams (a standalone sprout defines sb_stream_*), a stream body goes out as produced: the response
+// is marked x-sb-stream and the native writer holds the connection open. Hosts that do not stream (sproutd's workers) link
+// weak fallbacks, report unsupported and keep buffering. op: s supported, o open, w/W write, p bytes unsent, k park timer, e end.
 // oxlint-disable-next-line no-unused-vars -- read inside the RawC block, not by JS.
 function __sbStreamOp(op, id, data) {
   let out = "";
@@ -15311,24 +14952,9 @@ function __sbStreamResponse(response) {
   return response;
 }
 
-// ---------------------------------------------------------------------------
-// WebSockets, from compatibility date 2026-10-30, as in workerd: WebSocketPair, accept(),
-// send(), close(), message and close events, new Response(null, { status: 101, webSocket })
-// and, for Durable Objects, the hibernation API (__sbDOWebSocketState).
-//
-// A pair whose ends both stay in this worker (a Worker and its Durable Object) is plain
-// JavaScript, so it works on every host. The client end of a 101 response becomes a real
-// socket only on a host that carries it (sproutd: its bridge sets sb_ws_hook); the host
-// then stands in for that end: what the app sends to it goes out, and what the remote
-// client sends arrives as if that end had sent it.
-//
-// __sbWsOp(op, id, data, n), on the host socket `id`:
-//   "o" open one for the app at compatibility date data (returns its id, "0" without a host or
-//   when the host does not carry sockets at that date), "t" send text data, "b" send the
-//   bytes in data, "c" close with code n and reason data, "p" poll the next event ("" for
-//   none, else "KIND LENGTH CODE": 0 text, 1 binary, 2 close, 3 connection lost), "i" take
-//   that event's payload into the Uint8Array data, "k" acknowledge n bytes dispatched,
-//   "w" fire timer n when an event arrives, "r" release. Returns a short string.
+// WebSockets, from compatibility date 2026-10-30, as in workerd (WebSocketPair, 101 responses, the hibernation API
+// __sbDOWebSocketState). A pair with both ends in this worker is plain JavaScript; a 101 client end is a real socket only on a host
+// that carries it (sproutd: sb_ws_hook). __sbWsOp ops: o open, t/b send, c close, p poll (0 text, 1 binary, 2 close, 3 lost), i, k ack, w timer, r release.
 // oxlint-disable-next-line no-unused-vars -- read inside the RawC block, not by JS.
 function __sbWsOp(op, id, data, n) {
   let out = "";
@@ -15408,10 +15034,8 @@ const __SB_WS_CLOSING = 2;
 const __SB_WS_CLOSED = 3;
 const __sbWsKey = {};
 
-// One end of a WebSocketPair. Events are plain objects with the fields apps read (type,
-// data; code, reason, wasClean), dispatched to on<type> (when assigned) and then to the
-// addEventListener listeners, as workerd does. Binary messages arrive as a Blob unless
-// binaryType is "arraybuffer" (workerd's standard binary type).
+// One end of a WebSocketPair. Events are plain objects with the fields apps read, dispatched to on<type> then to
+// addEventListener listeners, as workerd does. Binary messages arrive as a Blob unless binaryType is "arraybuffer".
 class __SbWebSocket {
   constructor(key, protocols) {
     // new WebSocket(url) connects out from compatibility date 2026-11-01; before it only a
@@ -15773,13 +15397,9 @@ function __sbWsPump(ws) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// cloudflare:sockets connect(), from compatibility date 2026-11-17. A socket is a host
-// socket in the outbound WebSocket table (sb_wsc, raw mode); this end speaks the __sbWsOp ops:
-// "T" open (host, port, secureTransport mode, server name), "b" queue bytes (returns how many
-// are still unsent), "S" start TLS, "H" shut the write side, "p" "i" take an event, "k" ack,
-// "w" park a timer, "r" release. Events: 1 data, 3 error, 4 connected, 6 end of input,
-// 8 send queue drained, 9 TLS handshake done.
+// cloudflare:sockets connect(), from compatibility date 2026-11-17: a host socket in the outbound table (sb_wsc, raw mode) driven
+// by __sbWsOp: T open, b queue, S start TLS, H shut write, p/i event, k ack, w timer, r release.
+// Events: 1 data, 3 error, 4 connected, 6 end of input, 8 send queue drained, 9 TLS handshake done.
 const __SB_SOCKETS_DATE = "2026-11-17";
 const __SB_TCP_HWM = 262144;
 let __sbTcpOpen = 0;
@@ -16015,10 +15635,9 @@ function __sbTcpFacade(st, mode, upgrade) {
       st.upgradedOnce = true;
       let sni = st.host;
       if (options != null && options.expectedServerHostname != null) sni = String(options.expectedServerHostname);
-      // This socket's streams end here, as workerd detaches them. Its writable is closed first:
-      // what a writer had already queued still goes out in the clear, then the "S" op marks the
-      // queue position after which only TLS records leave the host; the new socket's writes wait
-      // on that (upgrade.pending), so no write issued after startTls() can precede the handshake.
+      // This socket's streams end here, as workerd detaches them. Its writable closes first, so queued writes still go
+      // out in the clear; then the "S" op marks the position after which only TLS records leave, and the new socket's
+      // writes wait on it (upgrade.pending), so nothing issued after startTls() can precede the handshake.
       const upgrade = { pending: null };
       upgrade.pending = new Promise((resolve) => {
         const request = () => {
@@ -16099,13 +15718,9 @@ function __sbConnect(address, options) {
 }
 globalThis.__sbSockets = { connect: __sbConnect };
 
-// ---------------------------------------------------------------------------
-// Outbound WebSockets, from compatibility date 2026-11-01: new WebSocket(url, protocols) and
-// fetch(url, { headers: { Upgrade: "websocket" } }), whose Response carries the connected
-// socket as response.webSocket (call accept() on it). The transport's C code owns the
-// connection (sb_wsc_hook, the embedded transport); this end is a host socket with the ops
-// described at __sbWsOp, ids with the top bit set. Returning that Response from a handler
-// relays the socket to the client through a pair.
+// Outbound WebSockets, from compatibility date 2026-11-01: new WebSocket(url) and fetch(url, { headers: { Upgrade: "websocket" } })
+// give response.webSocket. The transport's C code owns the connection (sb_wsc_hook); this end is a host socket (__sbWsOp,
+// ids with the top bit set). Returning that Response relays the socket to the client through a pair.
 function __sbWsOutboundOn() {
   return __sbCompatDate() >= "2026-11-01";
 }
@@ -16386,16 +16001,9 @@ function __sbWsProxy(r, upstream) {
   return r;
 }
 
-// ---------------------------------------------------------------------------
-// Hibernation, from compatibility date 2026-11-01 on a host that keeps client sockets open while
-// the worker is gone (sproutd; ops "H" "h" "a" "l" "R" "N" of sb_ws_hook). A Durable Object's
-// hibernatable socket (ctx.acceptWebSocket) whose other end is a host socket is recorded in
-// storage scoped to the object: its host id, tags, attachment, and the object's auto-response.
-// The host answers the auto-response itself and may stop the worker while the socket is idle.
-// When a message or close arrives for a socket the worker no longer knows, the host starts a
-// worker, tells it which sockets are still open ("l"), and wakes the restore loop ("R", "N"):
-// the object is constructed again (ctx.getWebSockets() lists its sockets from the start, with
-// their tags and attachments) and the event is dispatched as webSocketMessage/webSocketClose.
+// Hibernation, from compatibility date 2026-11-01, on a host that keeps client sockets open while the worker is gone (sproutd).
+// A hibernatable socket's host id, tags, attachment and auto-response are stored scoped to the object; on a message for an
+// unknown socket the host starts a worker, which rebuilds the object and dispatches webSocketMessage/webSocketClose.
 let __sbWsHibHost = -1;
 function __sbWsHibOn() {
   if (__sbCompatDate() < "2026-11-01" || !__sbDOGated()) return false;
@@ -16575,10 +16183,8 @@ async function __sbFetchWithDrain(res, tasks, bindingCall, rethrow, top, cpuCell
   return r;
 }
 
-// #179 — turn an uncaught handler exception into a 500 instead of letting it
-// propagate past __sbEntry and crash the whole server. Logged first, the way a
-// Worker logs "Uncaught Error: ...": a swallowed exception left a 500 with
-// nothing on stderr, which hid #168 entirely.
+// #179: turn an uncaught handler exception into a 500 instead of crashing the server. Logged first, as a Worker logs
+// "Uncaught Error: ...": a swallowed exception left a 500 with nothing on stderr, which hid #168 entirely.
 function __sbErrorResponse(error, bindingCall, logRec) {
   __sbLogUncaught("fetch", error, logRec);
   // Untyped, as workerd sends it: the text/plain default is for handlers' bodies.
@@ -16595,11 +16201,9 @@ function __sbErrorResponse(error, bindingCall, logRec) {
   return response;
 }
 
-// A service-binding call the platform's edge vouched for: it carries the token the edge
-// gave this sprout (SB_EDGE_TOKEN), so no client can claim one. Such a call sees the URL
-// its caller passed (x-sb-url), not the deployment's hostname, and no remote address,
-// as in workerd. The edge's headers are removed from every request before the handler
-// sees it. Returns whether the edge vouched for this one.
+// A service-binding call the platform's edge vouched for carries the token the edge gave this sprout (SB_EDGE_TOKEN), so
+// no client can claim one. It sees the URL its caller passed (x-sb-url) and no remote address, as in workerd. The edge's
+// headers are removed from every request before the handler sees it.
 function __sbBindingCallIngress(request) {
   const headers = request.headers;
   const want = __sbEdgeToken();
@@ -16666,18 +16270,9 @@ function __sbLogUncaught(where, error, logRec) {
   }
 }
 
-// #268 — structured request and error records for a standalone binary. Off unless SB_LOG=json, so
-// nothing an app can observe changes and the per-request cost of "off" is one cached boolean. On, every
-// request writes one JSON line to stderr after its response is built, and every uncaught error (in a
-// handler, scheduled(), queue(), an alarm, a WebSocket handler, a rejected promise or a waitUntil task)
-// writes one more, in place of the plain "Uncaught (in ...)" text, so the stream stays parseable.
-//
-// What is never written: request or response bodies, headers (cookies and authorization among them), the
-// query string (it is where tokens end up), the client address, and the value of any declared secret (the
-// ones the message or stack happens to contain are replaced). Output is bounded: fields are cut to fixed
-// lengths and at most 200 lines a second go out; the rest are counted and reported by one "dropped" line
-// when the next second starts. A record's "id" ties a request line to the errors of the same request;
-// background work has id null.
+// #268: structured request and error records for a standalone binary, off unless SB_LOG=json (off costs one cached boolean).
+// Never written: bodies, headers, the query string (tokens end up there), the client address, declared secret values.
+// Bounded: fields are cut and at most 200 lines a second go out; the rest are counted in one "dropped" line.
 let __sbLogOn;
 let __sbLogSecretNames = [];
 let __sbLogSeq = 0;
@@ -16773,10 +16368,8 @@ function __sbLogError(where, error, rec) {
   }
 }
 
-// A promise rejected and nothing was waiting on it (an un-awaited `db.prepare(...).run()`
-// that failed, say). As on Workers the request, the process and every other request go on:
-// the rejection is logged, and an "unhandledrejection" event fires on the global scope when
-// something listens. Porffor's promise job loop calls this hook (patchUnhandledRejections);
+// A promise rejected with nothing waiting on it: as on Workers the request and process go on, the rejection is logged and
+// "unhandledrejection" fires when something listens. Porffor's promise job loop calls this hook (patchUnhandledRejections);
 // without it, it throws the reason out of the event loop and the process exits.
 globalThis.__sbOnUnhandledRejection = function (reason, promise) {
   __sbLogUncaught("promise", reason);
@@ -16788,11 +16381,9 @@ globalThis.__sbOnUnhandledRejection = function (reason, promise) {
   }
 };
 
-// AsyncLocalStorage (node:async_hooks, as Workers has it: run, getStore, exit and the static snapshot
-// (no bind, enterWith or disable). The patched Porffor (toolchain async-context.ts) keeps one
-// "current context" value that every promise reaction, await and timer records when it is created and
-// sets when it runs. Here that value is a frame: the stores of the AsyncLocalStorage instances
-// entered so far, in two parallel arrays (a frame is never changed, run() makes a new one).
+// AsyncLocalStorage (node:async_hooks, as Workers has it: run, getStore, exit and the static snapshot; no bind, enterWith
+// or disable). The patched Porffor (async-context.ts) keeps one "current context" that every promise reaction, await and
+// timer records and restores. Here it is a frame (the stores entered so far, two parallel arrays), never mutated: run() makes a new one.
 function __sbCtxGet() {
   let frame;
   // oxlint-disable-next-line no-unused-expressions -- Porffor.c`...` is inline C the compiler consumes, not a JS expression.
@@ -16903,14 +16494,9 @@ async function __sbQueueWithDrain(result, tasks) {
   return new Response(JSON.stringify(r), { headers: { "content-type": "application/json" } });
 }
 
-// Streamed request bodies, from compatibility date 2026-10-27, on a native server that
-// streams them (a standalone or platform sprout; request-streaming.ts in the toolchain).
-// The handler runs once the headers are in, and request.body hands out the bytes as they
-// arrive: the server pauses the socket while more than 1 MiB waits unread. Before that
-// date the server buffers the whole body and the handler gets it at once, as before.
-// op: "e" enable (at startup), "t" take the current request's body id, "p" poll (a byte
-// count, "0" nothing yet, "-1" ended, "-2" failed), "i" copy into the Uint8Array in data,
-// "w" wait on the timer id in data, "c" close. Returns a short string.
+// Streamed request bodies, from compatibility date 2026-10-27, on a native server that streams them (request-streaming.ts
+// in the toolchain): the handler runs once headers are in and the server pauses the socket while over 1 MiB is unread.
+// Before the date the whole body is buffered. op: e enable, t take body id, p poll (count, "0" none yet, "-1" ended, "-2" failed), i copy, w wait, c close.
 // oxlint-disable-next-line no-unused-vars -- read inside the RawC block, not by JS.
 function __sbReqBodyOp(op, id, data) {
   let out = "";
@@ -17032,10 +16618,8 @@ function __sbReqBodyTake() {
   return id;
 }
 
-// Native HTTP ingress stores the body as one character per raw byte. Keep
-// that representation for binary consumers, but decode text lazily before
-// handing the request to user code. Request.text() in Porffor otherwise treats
-// the raw bytes as already-decoded characters and corrupts Unicode/HMAC input.
+// Native HTTP ingress stores the body as one character per raw byte. Keep that for binary consumers but decode text
+// lazily before user code: Porffor's Request.text() otherwise treats the raw bytes as decoded and corrupts Unicode/HMAC input.
 function __sbDecodeIngress(request) {
   const streamed = __sbCompatDate() >= "2026-10-27" ? __sbReqBodyTake() : 0;
   if (streamed > 0) {
@@ -17071,11 +16655,9 @@ function __sbTrustedProxiesOnce() {
   return __sbTrustedCache;
 }
 
-// R2 transfer tickets (createUploadUrl, createDownloadUrl): /__sb/r2/transfer/BUCKET/TOKEN, scoped to one object and
-// good once. A standalone executable's native server answers them before JavaScript runs (patchR2Transfer, #195);
-// on a host that forwards every path to the worker (sproutd) the worker answers them here with the same statuses
-// and headers, before the app's fetch() sees the request. The body goes straight between the connection and the
-// object's file, one step at a time (__sbR2XferOp): at most a window of it is ever in the worker.
+// R2 transfer tickets (createUploadUrl, createDownloadUrl): /__sb/r2/transfer/BUCKET/TOKEN, scoped to one object, good
+// once. A standalone binary's native server answers them before JavaScript (patchR2Transfer, #195); on a host that
+// forwards every path (sproutd) the worker answers here with the same statuses, streaming a window at a time (__sbR2XferOp).
 const __SB_R2_TRANSFER = "/__sb/r2/transfer/";
 // Set by the embedded transport (it has the ticket contexts and their steps); the broker's own listener owns the path.
 // oxlint-disable-next-line no-unassigned-vars -- set by the embedded transport, above
@@ -17233,10 +16815,8 @@ globalThis.__sbEntry = function (handlers, request) {
   const trigger = __sbHeader(request.headers, "x-sb-trigger");
   if (!trigger) {
     const bindingCall = __sbBindingCallIngress(request);
-    // #163/#128 — expose the request metadata the edge already has, the
-    // Workers way, before the handler runs. httpProtocol/tlsVersion/tlsCipher
-    // are only set when a trusted front proxy forwarded them; colo, ASN and
-    // geo fields stay absent everywhere (#128 explicitly rejects faking them).
+    // #163/#128: expose the request metadata the edge already has, the Workers way. httpProtocol/tlsVersion/tlsCipher
+    // only come from a trusted front proxy; colo, ASN and geo stay absent everywhere (#128 rejects faking them).
     const __cf = request.cf || {};
     if (__sbTrustedProxiesOnce().length === 0) {
       // No trusted proxy (the usual case): the peer is the client and no forwarded header counts.
@@ -17253,16 +16833,9 @@ globalThis.__sbEntry = function (handlers, request) {
     request.cf = __cf;
     // The edge's headers are gone: from 2026-10-23 the handler cannot change the rest.
     __sbFreezeHeaders(request);
-    // #28 — per-invocation CPU time. One fetch turn per process (serial), so the
-    // process CPU delta across the handler is this invocation's CPU.
-    // ponytail: serial-turn assumption; revisit if the profile ever allows
-    // concurrent in-process requests.
-    //
-    // Sync handlers only. An async handler's promise is handed straight back:
-    // Porffor alpha-10's native-fetch server resolves the promise the handler
-    // itself returned, but never one derived from `.then()`, so chaining the
-    // tag on hangs the request forever. cpuMs is documented as absent for
-    // async handlers (see LogEvent in services/edge) — that is this.
+    // #28: per-invocation CPU time: one fetch turn per process (serial), so the process CPU delta is this invocation's.
+    // Sync handlers only: Porffor alpha-10's native-fetch server resolves the promise the handler returned, never one derived
+    // from `.then()`, so chaining the tag on an async handler hangs the request. cpuMs is absent for async handlers (LogEvent in services/edge).
     const __cpuCell = __sbCpuBegin();
     const __t0 = __cpuCell ? 0 : __sbCpuMs();
     // #268 — one record per request when SB_LOG=json; null (and no work at all) otherwise.
@@ -17341,11 +16914,8 @@ globalThis.__sbEntry = function (handlers, request) {
 
   if (trigger === "queue") {
     if (!__sbHandles(handlers, "queue")) return new Response("no queue handler", { status: 404 });
-    // #171 — same ctx.waitUntil shape. `__sbRunQueueBatch` was also
-    // fire-and-forget for an async `queue()`: it computed the default
-    // ack/retry and answered the broker before the handler's own awaits ran,
-    // so any ack()/retry() past the first `await` never made it into the
-    // response. It now awaits the handler itself when it returns a promise.
+    // #171: same ctx.waitUntil shape. `__sbRunQueueBatch` answered the broker before an async `queue()`'s own awaits ran,
+    // so any ack()/retry() past the first `await` was lost; it now awaits the handler when it returns a promise.
     const __sbTasks = [];
     const ctx = {
       waitUntil(p) {
@@ -17413,13 +16983,8 @@ globalThis.__sbEntry = function (handlers, request) {
   return new Response("unknown trigger", { status: 400 });
 };
 
-/**
- * Run one queue batch through the handler and report what it acked.
- *
- * Shared so the two ways a batch can arrive agree: over HTTP from the broker
- * (deployed, and the phase-0 standalone launcher), or straight from the local
- * timer in an embedded binary that has no broker to be delivered from.
- */
+// Run one queue batch through the handler and report what it acked. Shared so both arrivals agree: over HTTP from the
+// broker, or from the local timer in an embedded binary that has no broker.
 async function __sbRunQueueBatch(handlers, body, ctx) {
   const strict = __sbQueuesStrict();
   const binding = String(body.queue || "");
@@ -17511,10 +17076,8 @@ async function __sbRunQueueBatch(handlers, body, ctx) {
       (threw ? retried : acked).push(raw[i].id);
   }
   const out = { ack: acked, retry: retried };
-  // Retry delays and what happens past the last retry. Sent only where they differ from
-  // what a store does by itself (5 s, 5 attempts, then marked dead), so earlier dates
-  // without settings answer as before. A store that predates these fields (an older
-  // broker) ignores them and retries the messages listed in `retry`.
+  // Retry delays and what happens past the last retry, sent only where they differ from a store's defaults (5 s, 5
+  // attempts, then dead), so earlier dates answer as before. An older broker ignores them and retries the messages in `retry`.
   if (strict || settings.maxRetries !== undefined || settings.retryDelay !== undefined || settings.deadLetterQueue !== undefined) {
     const maxRetries = settings.maxRetries !== undefined ? settings.maxRetries : strict ? 3 : 4;
     const retryDelay = settings.retryDelay !== undefined ? settings.retryDelay : strict ? 0 : 5;

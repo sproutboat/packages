@@ -1,13 +1,6 @@
-/**
- * The native build of a standalone binary: the compiler only renders the split C
- * units (`porffor c`); this module compiles them with the bridge (`native-fetch-a22.c`) and the server
- * shim (the vendored uWebSockets shim rewritten over flat data, `standalone-shim.ts`), and links them with the
- * caller's native objects (SQLite, BearSSL, trust anchors, the restore objects) and uSockets.
- *
- * Objects are content-cached in the units directory (a unit whose C and flags did not change is not
- * recompiled), as the compiler's own build cache does; the CLI already keeps one units directory per
- * target and transport.
- */
+// The native build of a standalone binary: the compiler renders the split C units (`porffor c`); this compiles them with
+// the bridge (`native-fetch-a22.c`) and the server shim (`standalone-shim.ts`) and links them with the caller's native
+// objects and uSockets. Objects are content-cached in the units directory (the CLI keeps one per target and transport).
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
@@ -134,10 +127,9 @@ export async function buildStandaloneA21(input: StandaloneBuildInput): Promise<v
   // sources: the compiler's units, the bridge, the shim
   const unitFiles = (await readdir(units)).filter((f) => f.endsWith(".c")).sort();
   await writeFile(join(units, "porf_native_fetch_a22.c"), bridgeSource);
-  // sproutboat #236: uWebSockets answers an HTTP/1.0 request line with 505 unless HttpParser.h is
-  // edited, so this build applies the vendored patch (marker-guarded, a no-op on a patched checkout) to
-  // the checkout it compiles against. Objects are stamped by their own text, not by the headers they
-  // include, so the shim names the edit: a shim compiled against an unedited header is not reused.
+  // sproutboat #236: uWebSockets answers an HTTP/1.0 request line with 505 unless HttpParser.h is edited, so this build applies
+  // the vendored patch (marker-guarded) to its checkout. Objects are stamped by their own text, not their headers, so the shim
+  // names the edit: a shim compiled against an unedited header is not reused.
   await patchUwsHttp10(input.uwsDir);
   await writeFile(join(units, "porf_server.cpp"), `// ${HTTP10_SHIM_STAMP}\n` + standaloneShimSource());
   const sources = [

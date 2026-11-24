@@ -1,11 +1,7 @@
 /* oxlint-disable anti-slop/no-runtime-typeof -- runtime code Porffor compiles into the binary: typeof is how a callback or a thenable is recognised there. */
-// sproutd on Porffor alpha 21: the dispatch shim build/a21/base.ts puts after the runtime prelude.
-// The bridge (src/a21/native-host-bridge.c) builds the request parts in C and calls __sbDispatch
-// through a rooted function value; a settled response goes back through sb_response_complete_js,
-// at once or from the promise reaction that settles it later, as alpha 19's native-fetch
-// response reaction did. The response is read the way alpha 19's finalizer and bridge read it:
-// the flat Headers._entries list, _bodyInit over body, x-sb-raw-body marking a Latin-1 string
-// whose characters are the bytes, and byte bodies sent as their bytes.
+// sproutd on Porffor alpha 21: the dispatch shim build/a21/base.ts puts after the runtime prelude. The bridge builds the
+// request parts in C and calls __sbDispatch; a settled response goes back through sb_response_complete_js, at once or from the
+// promise reaction. It is read as alpha 19's finalizer read it: flat Headers._entries, _bodyInit, x-sb-raw-body for Latin-1 bytes.
 function __sbBuildRequest(method, url, headersBlob, body) {
   const request = Object.create(Request.prototype);
   request.url = url;
@@ -116,15 +112,9 @@ porf_gc_native_root_add(fire.val, fire.type);
 porf_gc_native_root_add(drain.val, drain.type);
 porf_gc_native_root_add(warm.val, warm.type);`;
 }
-// The template's warm-up (M6 causes 2 and 3): the fork template runs a few representative
-// requests through the shim's own path before it seals and forks, so the inline-cache slots of
-// the prelude's code (per-site 48-byte entries in the shared zero data, written on first use) and
-// the shapes of the request and response objects are filled in the template, shared by every
-// worker, instead of being copied into each worker on its first request (52 to 68 KiB per
-// worker). Only the prelude's functions are exercised (the app's own sites live in its module),
-// nothing here reaches the host (no timers, fetch, storage or console), and whatever it allocates
-// is garbage by the time the template collects. The megamorphic cache is frozen at the end: a
-// worker reads the template's entries and never writes one.
+// The template's warm-up (M6 causes 2 and 3): the fork template runs a few requests through the shim's own path before it seals,
+// so the prelude's inline-cache slots and object shapes are filled once and shared by every worker instead of copied into each on its
+// first request (52 to 68 KiB per worker). Only the prelude's functions run, nothing reaches the host, and the megamorphic cache is frozen.
 function __sbTemplateWarm() {
   const handler = function (request) {
     const url = new URL(request.url);

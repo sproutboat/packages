@@ -1,19 +1,6 @@
-/**
- * The embedded transport: SQLite compiled into the sprout, no broker at all.
- *
- * Same contract as transport-broker.js — `__sbCall(reqJson) -> replyJson` — so
- * every binding shim above it is unchanged and the conformance suite is the
- * proof that the swap changed no behaviour.
- *
- * The split is deliberate: C does only what JS cannot (open a database, bind
- * parameters, step a statement, encode a row), and every op — which SQL, which
- * partition key, what shape comes back — stays in JS, mirroring broker.ts. That
- * keeps the second implementation of the binding ops as small as it can be,
- * which is the whole worry with having one at all.
- *
- * Paths come from __sbEnv: the launcher-free binary is told its data directory
- * through SB_DATA_DIR, the same way it learns its port.
- */
+// The embedded transport: SQLite compiled into the sprout, no broker; the same `__sbCall(reqJson) -> replyJson` contract as
+// transport-broker.js, so the shims above are unchanged. C does only what JS cannot (open, bind, step, encode a row); every
+// op stays in JS, mirroring broker.ts, which keeps the second implementation small. Paths come from __sbEnv (SB_DATA_DIR).
 
 // oxlint-disable-next-line no-unused-expressions -- Porffor.c`...` is inline C the compiler consumes, not a JS expression.
 Porffor.c`
@@ -5583,11 +5570,9 @@ function __sbR2ReadInto(path, bucket, key, blobId, offset, view) {
   return got;
 }
 
-// Transfer tickets served by the worker (see sb_xfer_* above). op: "u" claim an upload ticket (a = bucket, b = token,
-// n = the declared length; "0 HANDLE" or "STATUS"), "s" a step of the upload from body id n ("d BYTES", "w", "e", "f"
-// or "s STATUS"), "b" write the bytestring in a (a buffered body; the status), "f" finish ("STATUS"), "x" release the
-// handle in n, "d" claim a download ticket ("0 HANDLE SIZE ETAG" or "STATUS"), "r" read the object's file at offset n
-// into the Uint8Array in view (handle in a; the count), "c" release a download handle. Returns a short string.
+// Transfer tickets served by the worker (see sb_xfer_* above). op: u claim an upload ticket, s a step of the upload, b write
+// a buffered body, f finish, x release the handle, d claim a download ticket, r read the object's file at offset n into
+// the view, c release a download handle. Returns a short string ("STATUS", or "0 HANDLE ...").
 // oxlint-disable-next-line no-unused-vars -- read inside the RawC block below, not by JS.
 function __sbR2XferOp(op, a, b, n, view) {
   let out = "";
@@ -5858,11 +5843,9 @@ function __sbD1BackupRaw(src, dest) {
   return res;
 }
 
-// Outbound HTTP. String params so C can read each directly; the JS side has
-// already split the URL; the connect refuses private addresses. `tlsFlag` is "1" or "0" —
-// a string like the rest, so the marshalling stays uniform.
-// asyncId > 0 (B18): queue the request under that timer id and return "" at once;
-// its callback reads the reply with __sbHttpAsyncResult.
+// Outbound HTTP. String params so C reads each directly; the JS side has split the URL; the connect refuses private
+// addresses. `tlsFlag` is "1" or "0". asyncId > 0 (B18): queue under that timer id and return "" at once; its callback
+// reads the reply with __sbHttpAsyncResult.
 // oxlint-disable-next-line no-unused-vars -- read inside the RawC block below, not by JS.
 function __sbHttpRaw(host, portStr, path, method, headersText, body, tlsFlag, asyncId) {
   let res = "";
@@ -6025,10 +6008,8 @@ function __sbSqlRaw(path, sql, paramsJson) {
   return res;
 }
 
-// One strict D1 statement: [header, rows, columns, changes, rowid]. A result has the empty string
-// for its header, rows an array of row arrays built here from the cells (BLOBs as byte arrays),
-// columns the array of names, and changes and rowid numbers: no JSON is written or parsed. Any
-// other reply is the error JSON in the header, with nothing after it.
+// One strict D1 statement: [header, rows, columns, changes, rowid]. A result has "" for its header and no JSON is written or
+// parsed; rows are arrays built from the cells (BLOBs as byte arrays). Any other reply is the error JSON in the header.
 // oxlint-disable-next-line no-unused-vars -- read inside the RawC block below, not by JS.
 function __sbSqlRowsRaw(path, sql, paramsJson) {
   let res = "";
@@ -6119,10 +6100,8 @@ function __sbSqlRowsRaw(path, sql, paramsJson) {
 
 var __sbDataDir = "";
 function __sbDir() {
-  // SB_DATA_DIR, then SPROUTBOAT_DATA, then <name>.data relative to the working
-  // directory. Environment only: a native-fetch binary never sees argv, because
-  // Porffor's runtime init calls porf_init(0, NULL). Resolved once — the answer
-  // cannot change mid-run.
+  // SB_DATA_DIR, then SPROUTBOAT_DATA, then <name>.data in the working directory. Environment only: a native-fetch binary
+  // never sees argv (Porffor's runtime init calls porf_init(0, NULL)). Resolved once.
   if (!__sbDataDir) {
     __sbDataDir =
       __sbEnv("SB_DATA_DIR") ||
@@ -6131,11 +6110,9 @@ function __sbDir() {
   }
   return __sbDataDir;
 }
-// The storage quota: an app's data directory holds at most SB_STORAGE_MAX_BYTES (sproutd
-// sets it per app; 10 GiB when unset, after D1's 10 GB per database). Past it, writes are
-// refused with an error that says so; reads and deletes still work, so an app can make
-// room. The size is measured at most once a second, and on a write's way in, so a write
-// can overshoot by what one second of writes adds. A D1 database is also capped at 10 GB.
+// The storage quota: an app's data directory holds at most SB_STORAGE_MAX_BYTES (sproutd sets it per app; 10 GiB when unset, as
+// D1's 10 GB). Past it writes are refused with an error that says so; reads and deletes still work. Measured at most
+// once a second, so a write can overshoot by one second of writes.
 var __sbQuotaMax = -1;
 var __sbQuotaUsed = 0;
 var __sbQuotaAt = -1;
@@ -6177,10 +6154,8 @@ var __sbQuotaOps = {
   "r2.multipart.create": "R2 createMultipartUpload()",
   "r2.multipart.complete": "R2 completeMultipartUpload()",
 };
-// D1 over the quota: pin each database at its current size (SQLITE_FULL on growth, so
-// reads and deletes still run); under it, cap it at 10 GB or the quota, whichever is less.
-// A database under LTX capture is frozen instead: every write is refused, because even a
-// DELETE adds a file to the replication spool, which counts toward the quota.
+// D1 over the quota: pin each database at its current size (SQLITE_FULL on growth, so reads and deletes still run), else
+// cap it at 10 GB or the quota. A database under LTX capture is frozen: even a DELETE adds a file to the replication spool.
 var __sbD1Capped = {};
 var __sbD1Captured = {};
 var __sbD1Checkpointed = {};
@@ -6217,10 +6192,9 @@ function __sbD1Quota(path) {
 function __sbStore() {
   return __sbDir() + "/store.sqlite";
 }
-// Where Analytics Engine datapoints, rate-limit windows and the Cache API live. Normally in store.sqlite. When
-// store.sqlite is captured (design 029 S1: SB_LTX_SCOPE lists store) they move to volatile.sqlite, which is never
-// captured: a rate-limit check would otherwise cost a commit's worth of fsyncs and a cache entry would be replicated
-// and kept for 30 days. Their rows are rebuilt or expire on their own; rows left in store.sqlite stay unused there.
+// Where Analytics Engine datapoints, rate-limit windows and the Cache API live: store.sqlite, or volatile.sqlite (never
+// captured) when store.sqlite is captured (design 029 S1, SB_LTX_SCOPE): a rate-limit check would otherwise cost a commit's
+// fsyncs and a cache entry would be replicated for 30 days. Their rows rebuild or expire; rows left in store.sqlite stay unused.
 var __sbVolatilePath = "";
 function __sbVolatileStore() {
   if (__sbVolatilePath === "") {
@@ -6398,12 +6372,9 @@ function __sbEnsureSchema() {
   );
 }
 
-// Analytics Engine keeps a point count per dataset in ae_count, so query() reads one row instead of counting the
-// dataset (count(*) walks every index entry: O(n), 40 ms at 80,000 points). Two triggers keep it exact inside the
-// statement that inserts or deletes, whoever runs it: a worker of an older runtime that has no triggers of its own
-// still counts through them, so a swap or a rollback leaves no drift. The table is made, filled from the points
-// already there and given its triggers in one transaction, only when it is not there yet.
-// Same table, triggers and rule as the broker's (wire/src/broker.ts).
+// Analytics Engine keeps a point count per dataset in ae_count, so query() reads one row (count(*) is O(n): 40 ms at 80,000
+// points). Two triggers keep it exact in the statement that inserts or deletes, so an older runtime's worker still counts
+// and a swap or rollback leaves no drift. Same table, triggers and rule as the broker's (wire/src/broker.ts).
 function __sbAeEnsureCounter(v) {
   const probe = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'ae_count'";
   if (__sbSql(v, probe, []).rows.length) return;
@@ -6426,16 +6397,9 @@ function __sbAeEnsureCounter(v) {
   }
 }
 
-// Analytics Engine retention. Cloudflare keeps the data points for three months
-// (https://developers.cloudflare.com/analytics/analytics-engine/limits/, "Data retention"); 92 days is the longest three
-// months, so nothing is dropped that Cloudflare would still hold. A dataset also holds at most __SB_AE_MAX_ROWS points,
-// the oldest going first: a bound on disk for an app that writes a lot (Cloudflare has none, and no disk of ours).
-// Neither rule runs on a request's way in as one big delete: a write prunes its own dataset at most every
-// __SB_AE_PRUNE_EVERY_MS per process, and a run removes at most __SB_AE_PRUNE_BATCH points in all (both rules share it),
-// through the (dataset, ts) index. A backlog is worked off over the writes that follow; at a sustained rate above about
-// 100 writes a second to one dataset from one process the cap is a soft bound. Same constants and rules as the broker's.
-// Deleting is observable to an existing app, so only an app of compatibility date __SB_AE_RETENTION_FROM or later prunes
-// (the index and the counter change nothing it can see and apply to every app).
+// Analytics Engine retention: 92 days (the longest three months; Cloudflare keeps three) and at most __SB_AE_MAX_ROWS points per
+// dataset, oldest first. A write prunes its own dataset at most every __SB_AE_PRUNE_EVERY_MS per process, removing at most
+// __SB_AE_PRUNE_BATCH points, so a backlog works off over later writes. Deleting is observable: only apps at __SB_AE_RETENTION_FROM or later prune.
 var __SB_AE_RETENTION_FROM = "2026-11-19";
 var __SB_AE_MAX_AGE_MS = 92 * 86400000;
 var __SB_AE_MAX_ROWS = 1000000;
@@ -6466,11 +6430,9 @@ function __sbAePrune(store, dataset, now) {
   }
 }
 
-// One page of r2.list for the shim from 2026-10-26: at most LIMIT entries after CURSOR,
-// keys under PREFIX, those holding DELIMITER after it grouped into delimitedPrefixes (a
-// group counts as one entry). Same rules as the broker's r2ListPage.
-// ponytail: with a delimiter every key after the cursor is read; an index on the
-// delimited prefix if buckets grow past ~100k keys.
+// One page of r2.list for the shim from 2026-10-26: at most LIMIT entries after CURSOR under PREFIX, keys holding
+// DELIMITER after it grouped into delimitedPrefixes (a group counts as one entry). Same rules as the broker's r2ListPage.
+// ponytail: with a delimiter every key after the cursor is read; index the delimited prefix past ~100k keys.
 function __sbR2ListPage(store, msg) {
   const prefix = String(msg.prefix || "");
   const delimiter = String(msg.delimiter || "");
@@ -6571,10 +6533,8 @@ function __sbEmbeddedDispatch(msg) {
     return { ok: true };
   }
   if (op === "kv.list") {
-    // The prefix matches exactly: LIKE ignored case and read "_" and "%" in it as wildcards.
-    // With a limit (the shim from 2026-10-25), a page of entries after the cursor (the last
-    // key of the previous page), with each key's expiration and metadata; without one,
-    // every key, as before.
+    // The prefix matches exactly (LIKE ignored case and read "_" and "%" as wildcards). With a limit (the shim from
+    // 2026-10-25) a page of entries after the cursor with each key's expiration and metadata; without one, every key.
     const prefix = msg.prefix || "";
     const paged = msg.limit != null;
     const limit = paged ? Math.max(0, Math.floor(Number(msg.limit))) : -1;
@@ -6609,12 +6569,9 @@ function __sbEmbeddedDispatch(msg) {
     return reply;
   }
 
-  // A service-binding call (compatibility date 2026-11-18): the host the app runs on routes it to the
-  // callee. The call is an HTTP request to the pseudo-host "sbsvc.HEX" (the binding's name in hex): the
-  // host sees the name on the egress socket the question came in on, finds the callee in its services
-  // map and answers "ok TICKET" with a connection to its own listener. __sbHttpRaw sends the ticket as
-  // a header (sb_http_plain) and the host's frontend, which alone mints tickets, delivers the request
-  // to the callee marked as a service-binding call. See sproutd's docs/bindings.md, "Service bindings".
+  // A service-binding call (compatibility date 2026-11-18): the host routes it to the callee. It is an HTTP request to the
+  // pseudo-host "sbsvc.HEX" (the binding's name in hex); the host finds the callee, answers "ok TICKET", and its frontend,
+  // which alone mints tickets, delivers the request marked as a service-binding call. See sproutd docs/bindings.md.
   if (op === "fetch" || op === "service.fetch") {
     const service = op === "service.fetch";
     let hostname;
@@ -6692,10 +6649,9 @@ function __sbEmbeddedDispatch(msg) {
     // channel the launcher and the supervisor use; there is nothing to decrypt.
     const raw = __sbEnv(String(msg.name));
     if (!raw) throw new Error("secret not set: " + msg.name);
-    // __sbEnv hands back the environment's bytes as a bytestring, one char per byte, so a UTF-8 secret ("é" is
-    // C3 A9) reached the app as "Ã©". From compatibility date 2026-11-07 it is decoded as UTF-8, as workerd's
-    // secrets are text. Bytes that are not valid UTF-8 pass through unchanged (__sbFromUtf8's rule). The broker
-    // transport is not touched: its secrets arrive as JSON, already real strings.
+    // __sbEnv returns the environment's bytes one char per byte, so a UTF-8 secret ("é" is C3 A9) reached the app as "Ã©".
+    // From compatibility date 2026-11-07 it is decoded as UTF-8, as workerd's secrets are text; invalid UTF-8 passes through
+    // (__sbFromUtf8's rule). The broker transport is untouched: its secrets arrive as JSON.
     const value = __sbCompatDate() >= "2026-11-07" ? __sbFromUtf8(raw) : raw;
     return { ok: true, value };
   }
@@ -6760,12 +6716,9 @@ function __sbEmbeddedDispatch(msg) {
     return { ok: true, path: dest, bytes: reply.bytes };
   }
 
-  // r2.put/get route through the same raw C path (__sbR2PutRaw/__sbR2GetRaw,
-  // sb_r2_put_c/sb_r2_get_c) the R2 binding's own put()/get() use — reachable
-  // separately only via a raw `__sbCall(op:"r2.put"/"r2.get")`, which nothing
-  // in this codebase does today, but broker.ts's dispatch() answers the same
-  // two ops, so the contract stays identical on both backends either way
-  // (#56: neither one keeps object bytes in SQLite any more).
+  // r2.put/get use the same raw C path as the R2 binding's put()/get() (__sbR2PutRaw/__sbR2GetRaw). Only a raw
+  // `__sbCall(op:"r2.put")` reaches this, which nothing does today, but broker.ts answers the same ops so the contract
+  // stays identical on both backends (#56: neither keeps object bytes in SQLite).
   if (op === "r2.put") {
     const reply = JSON.parse(
       __sbR2PutRaw(
@@ -7088,10 +7041,9 @@ function __sbEmbeddedDispatch(msg) {
   if (op === "do.storage.list") {
     const r = __sbSql(
       store,
-      // Same clamp as the broker: an unbounded list builds the whole result in
-      // memory before the caller sees any of it.
-      // start, startAfter, end and reverse come from 2026-10-28 storage (null when unset).
-      // The prefix match is exact: LIKE also matched _ and % as wildcards, case-insensitively.
+      // Same clamp as the broker: an unbounded list builds the whole result in memory before the caller sees any of it.
+      // start, startAfter, end and reverse come from 2026-10-28 storage (null when unset). The prefix match is exact:
+      // LIKE also matched _ and % as wildcards, case-insensitively.
       "SELECT key, value FROM do_storage WHERE cls = ?1 AND id = ?2 AND substr(key, 1, length(?3)) = ?3" +
         " AND (?5 IS NULL OR key >= ?5) AND (?6 IS NULL OR key > ?6) AND (?7 IS NULL OR key < ?7)" +
         (msg.reverse ? " ORDER BY key DESC" : " ORDER BY key") +
@@ -7174,10 +7126,8 @@ function __sbEmbeddedDispatch(msg) {
   }
 
   if (op === "ratelimit.check") {
-    // #69 — fixed window. limit/period come in the message (the transport holds
-    // no config). One upsert: same window -> count+1, new window -> reset to 1.
-    // ponytail: fixed window, so a burst straddling the boundary can briefly
-    // reach ~2x limit. Swap for a two-window weighted count if that matters.
+    // #69: fixed window; limit/period come in the message. One upsert: same window -> count+1, new window -> 1.
+    // ponytail: a burst straddling the boundary can reach ~2x limit; use a two-window weighted count if that matters.
     const limit = Math.max(Number(msg.limit) || 1, 1);
     const period = Math.max(Number(msg.period) || 60, 1);
     const now = Math.floor(Date.now() / 1000);
@@ -7247,11 +7197,8 @@ function __sbEmbeddedDispatch(msg) {
 
 /** One D1 statement, shaped like the broker's d1Run. */
 // BEGIN D1 OPS (lifted by test/native-d1.ts)
-// D1 calls from compatibility date 2026-10-24 come with msg.strict (the shim sets it):
-// exact parameter counts, foreign keys enforced, D1's error text, and rows as arrays with
-// their column names (the shim builds the objects, so duplicate names survive in raw()).
-// A BLOB comes from C as {"$blob":"HEX"}; strict calls get it so, older ones get the one
-// char per byte string they always had.
+// D1 calls from compatibility date 2026-10-24 come with msg.strict: exact parameter counts, foreign keys enforced, D1's error text, rows
+// as arrays with column names (duplicates survive in raw()). A BLOB comes from C as {"$blob":"HEX"} for strict calls, else the old string.
 var __sbD1Opened = {};
 function __sbD1Open(path, strict) {
   if (__sbD1Opened[path] === strict) return;
@@ -7364,13 +7311,8 @@ function __sbD1ExecLines(path, lines, parity) {
 }
 // END D1 OPS
 
-/**
- * R2 object bodies, out of band (#56).
- *
- * The core shim calls these instead of putting an object body in a frame. The
- * broker transport defines the same two names in terms of __sbRpc, so the shim
- * itself does not know which backend it is on.
- */
+// R2 object bodies, out of band (#56): the core shim calls these instead of putting a body in a frame. The broker transport
+// defines the same two names over __sbRpc, so the shim does not know which backend it is on.
 globalThis.__sbR2Put = function (bucket, key, body, httpMetadata, customMetadata) {
   __sbQuotaCheck("R2 put()");
   __sbEnsureSchema();
@@ -7450,10 +7392,9 @@ globalThis.__sbFetchUpstream = function (op, msg) {
   return __sbRpc(op, msg);
 };
 
-// The resolution of assets.get, one function for the baked and the directory assets so they cannot diverge:
-// redirects, an exact file, a trailing "/" -> index.html, an extensionless path -> ".html" then "/index.html", then the
-// manifest's notFound ("single-page-application": /index.html, "404-page": /404.html). FILES is what a path is looked up
-// in (baked: the file bytes; directory: the manifest's entries). The reply carries the matched `key` and never a body.
+// The resolution of assets.get, one function for baked and directory assets so they cannot diverge: redirects, an exact
+// file, "/" -> index.html, extensionless -> ".html" then "/index.html", then the manifest's notFound. FILES is what a path
+// is looked up in. The reply carries the matched `key`, never a body.
 function __sbAssetFindKey(files, path) {
   if (path.charAt(path.length - 1) === "/") {
     const index = path + "index.html";
@@ -7467,10 +7408,9 @@ function __sbAssetFindKey(files, path) {
   }
   return null;
 }
-// The request path with its percent-escapes decoded, as Cloudflare's asset lookup does, so "/caf%C3%A9.txt" finds the file
-// "/café.txt". null when the decoded name could mean something else than a file name: a malformed escape, an escape that
-// decodes to "/", "\\" or a control character (so "%2F" can never add a path segment), or a segment that decodes to "." or
-// "..". Such a path is looked up as written only, never as a decoded name.
+// The request path with percent-escapes decoded, as Cloudflare's asset lookup does ("/caf%C3%A9.txt" finds "/café.txt"). null
+// when the decoded name could mean something else than a file name (malformed escape, an escape decoding to "/", "\\" or a
+// control character, or a segment decoding to "." or ".."); such a path is looked up as written only.
 function __sbAssetDecodePath(path) {
   if (path.indexOf("%") === -1) return null;
   const parts = path.split("/");
@@ -7716,10 +7656,8 @@ __sbCallDirect = function (req) {
 };
 
 // --- local triggers ---------------------------------------------------------
-// A deployed sprout is driven by the broker: it POSTs x-sb-trigger for cron
-// ticks, queue batches and DO alarms. An embedded binary has no broker, so the
-// same work runs on timers in this process and calls the handler directly.
-// Porffor's native-fetch runtime provides setInterval, so this needs no C.
+// A deployed sprout is driven by the broker POSTing x-sb-trigger; an embedded binary has no broker, so the same work runs on
+// timers in this process and calls the handler directly (Porffor's native-fetch runtime provides setInterval, so no C).
 
 /** 5-field cron match (min hour dom month dow, UTC) — the same rules broker.ts applies. */
 function __sbCronMatches(expr, when) {
@@ -7793,10 +7731,9 @@ function __sbQueueWaitMs(binding) {
   return Math.max(0, Number(__sbQueueSettings(binding).maxBatchTimeout) || 0) * 1000;
 }
 
-// One delivery pass over the queues this worker consumes: claims up to max_batch_size (10)
-// due messages per queue, hands them to queue() and applies its acks and retries. With a
-// max_batch_timeout, a batch smaller than max_batch_size waits until its oldest message
-// has been due that long.
+// One delivery pass over the queues this worker consumes: claims up to max_batch_size (10) due messages per queue, hands
+// them to queue() and applies its acks and retries. With a max_batch_timeout, a smaller batch waits until its oldest
+// message has been due that long.
 async function __sbQueuePass(handlers, queues) {
   __sbEnsureSchema();
   const store = __sbStore();
@@ -7845,10 +7782,8 @@ async function __sbQueuePass(handlers, queues) {
       messages.push({ id: row[0], body: row[1], timestamp: Number(row[3]) || now, attempts: Number(row[2]) + 1 });
     }
     const metadata = { metrics: __sbQueueBacklog(store, name) };
-    // #171 — same ctx.waitUntil as the broker-delivered path, and the same
-    // fix for the handler's own promise: `__sbRunQueueBatch` used to be
-    // called fire-and-forget here too, so an async `queue()`'s ack/retry
-    // calls made after its first `await` never reached these SQL writes.
+    // #171: same ctx.waitUntil and handler-promise fix as the broker-delivered path: `__sbRunQueueBatch` was fire-and-forget,
+    // so ack/retry calls after an async `queue()`'s first `await` never reached these SQL writes.
     const __sbTasks = [];
     const ctx = {
       waitUntil(p) {
@@ -7894,9 +7829,8 @@ function __sbQueueRetire(store, name, settings, now) {
   if (__sbLocal !== null && __sbLocal.queues.indexOf(part) !== -1) __sbHostDue(now);
 }
 
-// Applies a batch's outcome to the claimed rows. `dead` (past max_retries) move to the dead
-// letter queue `deadLetter` as new messages, or are marked dead; `delays` gives each retry's
-// delay in seconds (5 when the runtime sends none). A row whose claim expired meanwhile was
+// Applies a batch's outcome to the claimed rows. `dead` (past max_retries) move to the dead letter queue `deadLetter` as new
+// messages, or are marked dead; `delays` gives each retry's seconds (5 when none). A row whose claim expired meanwhile was
 // handed out again and is left alone.
 function __sbQueueSettle(store, name, claim, result) {
   const now = Date.now();
@@ -8125,15 +8059,9 @@ globalThis.__sbRunLocalDue = async function () {
   return new Response(null, { status: 204 });
 };
 
-/**
- * Start the timers an embedded binary needs. Called from the generated module
- * once the handler object exists; the broker transport defines a no-op of the
- * same name, so the generated code is identical either way.
- *
- * B22: on sproutd the host delivers the triggers instead, and wakes a reaped app for
- * them: this reports the crons and whether the worker consumes queues or alarms, and
- * starts no timer (an interval would also keep the worker from ever going idle).
- */
+// Start the timers an embedded binary needs, called from the generated module once the handler exists; the broker transport
+// defines a no-op of the same name. B22: on sproutd the host delivers triggers and wakes a reaped app, so this only reports
+// the crons and whether the worker consumes queues or alarms, and starts no timer (an interval would keep the worker from idling).
 globalThis.__sbStartLocalTriggers = function (handlers, bindings) {
   const crons = bindings.crons || [];
   const dos = bindings.do || [];
