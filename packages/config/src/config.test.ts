@@ -15,9 +15,17 @@ test("accepts kv_namespaces / secrets / d1_databases / r2_buckets and passes the
   });
 });
 
-test("binding names must be UPPER_SNAKE_CASE", () => {
-  const r = parseConfig(`${base}, "kv_namespaces": ["cache"] }`);
-  expect(r.ok).toBe(false);
+test("binding names are any JavaScript identifier, as on Cloudflare", () => {
+  for (const name of ["cache", "AuthDb", "BetterAuthSecret_text", "_x", "R2_BUCKET", "Chat"]) {
+    const ok = parseConfig(
+      `${base}, "kv_namespaces": ["${name}"], "durable_objects": { "Do${name}": "Cls" }, "secrets": ["S${name}"], "vars": { "V${name}": "v" } }`,
+    );
+    expect(ok.ok).toBe(true);
+  }
+  for (const name of ["1abc", "a-b", "a b", "a.b", "", "__proto__", "ünï"]) {
+    expect(parseConfig(`${base}, "kv_namespaces": [${JSON.stringify(name)}] }`).ok).toBe(false);
+    expect(parseConfig(`${base}, "secrets": [${JSON.stringify(name)}] }`).ok).toBe(false);
+  }
 });
 
 test("#174: outbound is accepted with a warning and dropped, whatever it holds", () => {
@@ -78,10 +86,10 @@ test("assets: accepts a full block and passes it through", () => {
   });
 });
 
-test("assets: directory required, binding UPPER_SNAKE, enum + pattern checks, no collision", () => {
+test("assets: directory required, binding an identifier, enum + pattern checks, no collision", () => {
   expect(parseConfig(`${base}, "assets": { "binding": "ASSETS" } }`).ok).toBe(false);
   expect(parseConfig(`${base}, "assets": { "directory": "../etc" } }`).ok).toBe(false);
-  expect(parseConfig(`${base}, "assets": { "directory": "public", "binding": "assets" } }`).ok).toBe(false);
+  expect(parseConfig(`${base}, "assets": { "directory": "public", "binding": "my assets" } }`).ok).toBe(false);
   expect(parseConfig(`${base}, "assets": { "directory": "public", "not_found_handling": "spa" } }`).ok).toBe(false);
   expect(parseConfig(`${base}, "assets": { "directory": "public", "run_sprout_first": ["api/*"] } }`).ok).toBe(false);
   const collide = parseConfig(
@@ -96,10 +104,10 @@ test("assets: bare directory (edge-only, no binding) is valid", () => {
   expect(r.ok && r.value.assets).toEqual({ directory: "public" });
 });
 
-test("version_metadata: accepts an UPPER_SNAKE binding name and collides like any other binding", () => {
+test("version_metadata: accepts a binding name and collides like any other binding", () => {
   const r = parseConfig(`${base}, "version_metadata": "CF_VERSION_METADATA" }`);
   expect(r.ok && r.value.version_metadata).toBe("CF_VERSION_METADATA");
-  expect(parseConfig(`${base}, "version_metadata": "lower" }`).ok).toBe(false);
+  expect(parseConfig(`${base}, "version_metadata": "not valid" }`).ok).toBe(false);
   const collide = parseConfig(`${base}, "kv_namespaces": ["V"], "version_metadata": "V" }`);
   expect(collide.ok).toBe(false);
 });
@@ -147,7 +155,7 @@ test("services: valid entries parse; bad shapes and collisions are rejected", ()
   expect(ok.ok).toBe(true);
   if (ok.ok) expect(ok.value.services).toEqual([{ binding: "AUTH", service: "auth-api" }]);
 
-  const lower = parseConfig(JSON.stringify({ ...base, services: [{ binding: "auth", service: "auth-api" }] }));
+  const lower = parseConfig(JSON.stringify({ ...base, services: [{ binding: "au th", service: "auth-api" }] }));
   expect(lower.ok).toBe(false);
 
   const dupe = parseConfig(

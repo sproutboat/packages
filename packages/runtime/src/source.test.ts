@@ -71,3 +71,79 @@ test("a real node: import or require is still refused, at any date", () => {
       expect(validateHttpSyncSource(module, date).ok).toBe(false);
   }
 });
+
+// Compat sprint wave 1: the check reads tokens, not text (sweep gap 3, Alchemy better-auth gap 5).
+const DATES = [undefined, "2026-10-22", GUARDED_GLOBALS_DATE, "2026-11-17", "2026-11-25"];
+
+test("import( and node: inside a string, a template or a comment are not imports (openai SDK message)", () => {
+  for (const body of [
+    // openai/internal/uploads.mjs: a hint in an error message
+    "throw new Error(\"Pass a File, or set `globalThis.File` to `import('node:buffer').File`.\");",
+    'var hint=`load it with import("node:buffer") first`;',
+    "// import('./x.js') is what the dev server does\n",
+    "/* import('node:fs') */",
+    // react-router: client script text carrying a dynamic import
+    'var s=`<script type="module">import(${JSON.stringify(u)})</script>`;',
+    "var t=\"require('fs')\";",
+    "var r=/import\\(['\"]node:fs['\"]\\)/;",
+  ]) {
+    // the words are not code at any date; a message that names Buffer.write( is the date-gated rule below
+    const result = validateHttpSyncSource(wrap(body), "2026-11-25");
+    expect(result).toEqual({ ok: true });
+    for (const date of [undefined, "2026-10-22"]) {
+      const errors = validateHttpSyncSource(wrap(body), date);
+      if (!errors.ok) expect(errors.errors.join()).not.toMatch(/import\(\)|CommonJS|survived/);
+    }
+  }
+});
+
+test("a code import() after a string that looks like code is still refused", () => {
+  for (const body of [`var a="x";var m=await import(route.module);`, "var a=`${1}`;var m=import(`./${p}.js`);"]) {
+    for (const date of DATES) {
+      const result = validateHttpSyncSource(wrap(body), date);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.errors.join()).toContain("dynamic import()");
+    }
+  }
+});
+
+test("a caught import of a node: module is a probe, not an import (better-auth: node:sqlite, node:async_hooks)", () => {
+  for (const body of [
+    "async function f(){try{const {DatabaseSync}=await import(/* @vite-ignore */ /* webpackIgnore: true */ `node:sqlite`);return DatabaseSync}catch{return null}}",
+    "async function f(){try{if(x){return (await import(`node:async_hooks`)).AsyncLocalStorage}}catch(e){return null}}",
+    'var p=import("node:fs").catch(()=>null);',
+  ]) {
+    for (const date of DATES) expect(validateHttpSyncSource(wrap(body), date)).toEqual({ ok: true });
+  }
+});
+
+test("an uncaught import of a node: module is still refused", () => {
+  for (const body of [
+    `async function f(){return await import("node:fs");}`,
+    "try{}catch(e){await import(`node:fs`)}",
+  ]) {
+    for (const date of DATES) expect(validateHttpSyncSource(wrap(body), date).ok).toBe(false);
+  }
+});
+
+test('an "in globalThis" test guards a Node global like typeof does (better-auth: "Buffer" in globalThis&&Buffer.prototype)', () => {
+  for (const body of [
+    'var q="Buffer"in globalThis&&Buffer.prototype.indexOf;',
+    "var q=`Buffer`in globalThis&&Buffer.prototype.indexOf;",
+    'if("Buffer" in globalThis){Buffer.from(x)}',
+    'var q="process" in self ? process.env : {};',
+  ]) {
+    for (const date of [GUARDED_GLOBALS_DATE, "2026-11-25"])
+      expect(validateHttpSyncSource(wrap(body), date)).toEqual({ ok: true });
+  }
+  // a test for a different global, or none, does not guard
+  for (const body of ['var q="Deno" in globalThis;var b=Buffer.from("a");', "var b=Buffer.from('a');"])
+    expect(validateHttpSyncSource(wrap(body), GUARDED_GLOBALS_DATE).ok).toBe(false);
+});
+
+test("a word-only mention of Buffer.write( in a string passes from the guarded date, and fails before it as always", () => {
+  expect(validateHttpSyncSource(wrap('throw new Error("Buffer.write(x) is gone");'), "2026-10-22").ok).toBe(false);
+  expect(validateHttpSyncSource(wrap('throw new Error("Buffer.write(x) is gone");'), "2026-11-25")).toEqual({
+    ok: true,
+  });
+});

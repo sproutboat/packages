@@ -72,12 +72,48 @@ export function resolveAssetKey(path: string, has: (key: string) => boolean): st
   return null;
 }
 
+/**
+ * `.assetsignore` at the asset root, gitignore style: `#` comments, `!` re-includes, a trailing `/` matches directories only, a pattern with a slash
+ * is anchored to the root and one without matches a name at any depth. `*` stays in a segment, `**` crosses segments.
+ */
+export function parseAssetsIgnore(text: string): (path: string, isDir: boolean) => boolean {
+  const rules = text
+    .split(/\r?\n/)
+    .map((raw) => raw.trimEnd())
+    .filter((line) => line !== "" && !line.startsWith("#"))
+    .map((line) => {
+      const negate = line.startsWith("!");
+      let pattern = negate ? line.slice(1) : line;
+      const dirOnly = pattern.endsWith("/");
+      if (dirOnly) pattern = pattern.slice(0, -1);
+      const anchored = pattern.includes("/");
+      pattern = pattern.replace(/^\//, "");
+      const body = pattern
+        .replace(/[.+^${}()|[\]\\]/g, (c) => `\\${c}`)
+        .replace(/\*\*\//g, "\u0000")
+        .replace(/\*\*/g, "\u0001")
+        .replace(/\*/g, "[^/]*")
+        .replace(/\?/g, "[^/]")
+        .replace(/\u0000/g, "(?:.*/)?")
+        .replace(/\u0001/g, ".*");
+      return { negate, dirOnly, rx: new RegExp(`^${anchored ? "" : "(?:.*/)?"}${body}$`) };
+    });
+  return (path, isDir) => {
+    let ignored = false;
+    for (const rule of rules) if ((!rule.dirOnly || isDir) && rule.rx.test(path)) ignored = !rule.negate;
+    return ignored;
+  };
+}
+
 /** Walk `dir` recursively, returning `{ "/path": {hash,size,type} }`. `_headers`/`_redirects` at the root are config, not servable files (#61) — see `readAssetRules`. */
 export function walkAssets(dir: string) {
   const out: AssetFiles = {};
+  const ignorePath = join(dir, ".assetsignore");
+  const ignored = existsSync(ignorePath) ? parseAssetsIgnore(readFileSync(ignorePath, "utf8")) : () => false;
   const recurse = (abs: string, rel: string): void => {
     for (const ent of readdirSync(abs, { withFileTypes: true })) {
       if (ent.name.startsWith(".")) continue;
+      if (ignored(posix.join(rel, ent.name), ent.isDirectory())) continue;
       if (rel === "" && (ent.name === "_headers" || ent.name === "_redirects")) continue;
       const childAbs = join(abs, ent.name);
       const childRel = posix.join(rel, ent.name);

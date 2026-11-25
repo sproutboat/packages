@@ -970,7 +970,7 @@ export function createBroker(opts: BrokerOptions = {}): Broker {
 
   const transfer = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
-    const match = /^\/__sb\/r2\/transfer\/([A-Z][A-Z0-9_]*)\/([0-9a-f]{24})$/.exec(url.pathname);
+    const match = /^\/__sb\/r2\/transfer\/([A-Za-z_][A-Za-z0-9_]*)\/([0-9a-f]{24})$/.exec(url.pathname);
     if (!match) return new Response("not found", { status: 404 });
     let store: Database;
     let bucket: string;
