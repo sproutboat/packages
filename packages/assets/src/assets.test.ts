@@ -8,6 +8,7 @@ import {
   matchHeaders,
   findRedirect,
   matchRedirect,
+  parseAssetsIgnore,
   parseHeaders,
   parseRedirects,
   resolveAssetKey,
@@ -38,7 +39,7 @@ test("isSproutFirst: boolean short-circuits; patterns match with negation", () =
   expect(isSproutFirst(["/api/*"], "/index.html")).toBe(false);
   expect(isSproutFirst(["/api/*", "!/api/docs/*"], "/api/docs/intro")).toBe(false);
   expect(isSproutFirst(["/api/**"], "/api/a/b/c")).toBe(true);
-  expect(isSproutFirst(["/api/*"], "/api/a/b")).toBe(false); // single * stays in a segment
+  expect(isSproutFirst(["/api/*"], "/api/a/b")).toBe(true); // * is greedy, as on Cloudflare
 });
 
 test("walkAssets hashes every file under a directory, posix keys", () => {
@@ -188,4 +189,43 @@ test("readAssetRules: empty when neither file exists, parsed when both do", () =
   expect(rules.headers).toHaveLength(1);
   expect(rules.redirects).toHaveLength(1);
   rmSync(dir, { recursive: true, force: true });
+});
+
+test("parseAssetsIgnore: gitignore rules (Astro's _worker.js, a nested dir, negation, anchoring)", () => {
+  const ignored = parseAssetsIgnore(
+    "# worker output\n_worker.js\n/secret.txt\nprivate/\n*.map\n!keep.map\nsrc/**/draft.html\n",
+  );
+  expect(ignored("_worker.js", true)).toBe(true);
+  expect(ignored("_worker.js/index.js", false)).toBe(false); // the directory is what gets skipped
+  expect(ignored("nested/_worker.js", false)).toBe(true);
+  expect(ignored("secret.txt", false)).toBe(true);
+  expect(ignored("a/secret.txt", false)).toBe(false);
+  expect(ignored("private", true)).toBe(true);
+  expect(ignored("private", false)).toBe(false);
+  expect(ignored("a/b.map", false)).toBe(true);
+  expect(ignored("keep.map", false)).toBe(false);
+  expect(ignored("src/x/y/draft.html", false)).toBe(true);
+  expect(ignored("index.html", false)).toBe(false);
+});
+
+test("walkAssets leaves out what .assetsignore names, and the file itself (the Astro worker leak)", () => {
+  const dir = mkdtempSync(join(tmpdir(), "sb-assetsignore-"));
+  try {
+    mkdirSync(join(dir, "_worker.js", "chunks"), { recursive: true });
+    writeFileSync(join(dir, "_worker.js", "index.js"), "export default {}");
+    writeFileSync(join(dir, "_worker.js", "chunks", "a.js"), "x");
+    writeFileSync(join(dir, "index.html"), "<p>hi</p>");
+    writeFileSync(join(dir, "app.js.map"), "{}");
+    writeFileSync(join(dir, ".assetsignore"), "_worker.js\n*.map\n");
+    expect(Object.keys(walkAssets(dir)).sort()).toEqual(["/index.html"]);
+    rmSync(join(dir, ".assetsignore"));
+    expect(Object.keys(walkAssets(dir)).sort()).toEqual([
+      "/_worker.js/chunks/a.js",
+      "/_worker.js/index.js",
+      "/app.js.map",
+      "/index.html",
+    ]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
