@@ -1,5 +1,11 @@
 # @sproutboat/assets
 
+## 0.4.0
+
+### Minor Changes
+
+- 9a80a2e: `.assetsignore` at the asset root is honoured (gitignore style, as in Cloudflare Workers Static Assets): the files it names are neither hashed nor uploaded, so an Astro build's `_worker.js` no longer leaks as public static files.
+
 ## 0.3.2
 
 ### Patch Changes
