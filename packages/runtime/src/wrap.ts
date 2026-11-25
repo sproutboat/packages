@@ -151,7 +151,7 @@ const REGEX_AFTER_WORD = new Set([
 ]);
 const STRING_BODY = { '"': /[^"\\\n]*(?:\\[\s\S][^"\\\n]*)*"/y, "'": /[^'\\\n]*(?:\\[\s\S][^'\\\n]*)*'/y } as const;
 const TEMPLATE_BODY = /[^`\\$]*(?:(?:\\[\s\S]|\$(?!\{))[^`\\$]*)*/y;
-const REGEX_BODY = /(?:[^/\\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*/y;
+const REGEX_BODY = /(?:[^/\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*/y;
 const SPECIAL = /["'`/{}]/g;
 
 /**
