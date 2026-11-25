@@ -146,9 +146,13 @@ export function isSproutFirst(spec: boolean | string[], pathname: string): boole
   return matched;
 }
 
-/** `*` matches any characters, `/` included, as in Cloudflare's `run_worker_first` (`/api/*` covers `/api/a/b`); `**` is the same. Anchored both ends. */
+/** `*` matches within a segment, `**` across segments. Anchored both ends. */
 function globMatch(pattern: string, path: string): boolean {
-  const rx = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*+/g, ".*");
+  const rx = pattern
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*\*/g, " ")
+    .replace(/\*/g, "[^/]*")
+    .replace(/ /g, ".*");
   return new RegExp(`^${rx}$`).test(path);
 }
 

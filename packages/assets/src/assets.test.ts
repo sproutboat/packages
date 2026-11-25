@@ -39,7 +39,7 @@ test("isSproutFirst: boolean short-circuits; patterns match with negation", () =
   expect(isSproutFirst(["/api/*"], "/index.html")).toBe(false);
   expect(isSproutFirst(["/api/*", "!/api/docs/*"], "/api/docs/intro")).toBe(false);
   expect(isSproutFirst(["/api/**"], "/api/a/b/c")).toBe(true);
-  expect(isSproutFirst(["/api/*"], "/api/a/b")).toBe(true); // * is greedy, as on Cloudflare
+  expect(isSproutFirst(["/api/*"], "/api/a/b")).toBe(false); // single * stays in a segment
 });
 
 test("walkAssets hashes every file under a directory, posix keys", () => {
