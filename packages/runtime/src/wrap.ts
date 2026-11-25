@@ -133,6 +133,179 @@ export function inlineWorkersImports(source: string): string {
   );
 }
 
+const REGEX_AFTER_WORD = new Set([
+  "return",
+  "typeof",
+  "instanceof",
+  "in",
+  "of",
+  "new",
+  "delete",
+  "void",
+  "throw",
+  "case",
+  "do",
+  "else",
+  "yield",
+  "await",
+]);
+const STRING_BODY = { '"': /[^"\\\n]*(?:\\[\s\S][^"\\\n]*)*"/y, "'": /[^'\\\n]*(?:\\[\s\S][^'\\\n]*)*'/y } as const;
+const TEMPLATE_BODY = /[^`\\$]*(?:(?:\\[\s\S]|\$(?!\{))[^`\\$]*)*/y;
+const REGEX_BODY = /(?:[^/\\\[\n]|\\.|\[(?:[^\]\\\n]|\\.)*\])+\/[a-z]*/y;
+const SPECIAL = /["'`/{}]/g;
+
+/**
+ * The module with strings, template text, regex bodies and comments blanked: same length and line breaks, so offsets match the source. Quote and
+ * slash delimiters stay. A tokenizer, not a parser: `/` after `)` or `]` is division, a regex that does not close on its line is left as code.
+ */
+export function maskNonCode(source: string): string {
+  let out = "";
+  let copied = 0;
+  const blank = (from: number, to: number) => {
+    out += source.slice(copied, from) + source.slice(from, to).replace(/[^\n]/g, " ");
+    copied = to;
+  };
+  const templateStack: number[] = [];
+  let depth = 0;
+  // Template text from `i` (just after a backtick or a closing `}`) up to the next `${` or closing backtick.
+  const template = (i: number): number => {
+    TEMPLATE_BODY.lastIndex = i;
+    const m = TEMPLATE_BODY.exec(source);
+    const end = i + (m === null ? 0 : m[0].length);
+    if (source.startsWith("${", end)) {
+      blank(i, end);
+      templateStack.push(depth);
+      return end + 2;
+    }
+    // The closing backtick (or the end of an unterminated template).
+    blank(i, end);
+    return end + 1;
+  };
+  let i = 0;
+  while (i < source.length) {
+    SPECIAL.lastIndex = i;
+    const m = SPECIAL.exec(source);
+    if (m === null) break;
+    const at = m.index;
+    const c = source[at];
+    i = at + 1;
+    if (c === "{") {
+      depth++;
+    } else if (c === "}") {
+      if (templateStack.length > 0 && templateStack[templateStack.length - 1] === depth) {
+        templateStack.pop();
+        i = template(i);
+      } else if (depth > 0) depth--;
+    } else if (c === '"' || c === "'") {
+      const body = STRING_BODY[c];
+      body.lastIndex = i;
+      const s = body.exec(source);
+      if (s !== null) {
+        blank(i, i + s[0].length - 1);
+        i += s[0].length;
+      }
+    } else if (c === "`") {
+      i = template(i);
+    } else {
+      const next = source[i];
+      if (next === "/") {
+        const nl = source.indexOf("\n", i);
+        const end = nl < 0 ? source.length : nl;
+        blank(at, end);
+        i = end;
+      } else if (next === "*") {
+        const close = source.indexOf("*/", i + 1);
+        const end = close < 0 ? source.length : close + 2;
+        blank(at, end);
+        i = end;
+      } else {
+        let p = at - 1;
+        while (p >= 0 && /\s/.test(source[p]!)) p--;
+        const prev = p >= 0 ? source[p]! : "";
+        let regex = true;
+        if (prev === ")" || prev === "]") regex = false;
+        else if (/[\w$]/.test(prev)) {
+          let w = p;
+          while (w > 0 && /[\w$]/.test(source[w - 1]!)) w--;
+          regex = REGEX_AFTER_WORD.has(source.slice(w, p + 1)) && source[w - 1] !== ".";
+        }
+        if (regex) {
+          REGEX_BODY.lastIndex = i;
+          const r = REGEX_BODY.exec(source);
+          if (r !== null) {
+            // The body is everything before the closing slash (the last one: flags have none); flags stay as code.
+            blank(i, i + r[0].lastIndexOf("/"));
+            i += r[0].length;
+          }
+        }
+      }
+    }
+  }
+  return out + source.slice(copied);
+}
+
+/** A literal-specifier `import("...")` in code: where it is (`start` to `end`), the specifier, and whether a failure is handled. */
+export type DynamicImport = { start: number; end: number; specifier: string | null; handled: boolean };
+
+/**
+ * Every `import(` call in code. `specifier` is the text of a plain string or interpolation-free template argument
+ * (`import(/* hint *\/ `node:sqlite`)` too), else null. `handled`: the call sits in a `try {` block or is followed by
+ * `.catch(`, so a missing module is a caught error, the way a library probes for an optional Node API.
+ */
+export function dynamicImports(source: string, masked: string = maskNonCode(source)): DynamicImport[] {
+  const sites: DynamicImport[] = [];
+  const re = /(?<![.$\w])import\s*\(\s*/g;
+  for (let m = re.exec(masked); m !== null; m = re.exec(masked)) {
+    const start = m.index;
+    const open = re.lastIndex;
+    let specifier: string | null = null;
+    let end = open;
+    const quote = masked[open];
+    if (quote === '"' || quote === "'" || quote === "`") {
+      const close = masked.indexOf(quote, open + 1);
+      if (close > 0) {
+        const text = source.slice(open + 1, close);
+        const after = /^\s*\)/.exec(masked.slice(close + 1, close + 40));
+        if (after !== null && !(quote === "`" && text.includes("${"))) {
+          specifier = text;
+          end = close + 1 + after[0].length;
+        }
+      }
+    }
+    if (specifier === null) {
+      sites.push({ start, end: open, specifier, handled: false });
+      continue;
+    }
+    let handled = /^\s*\.\s*catch\s*\(/.test(masked.slice(end, end + 40));
+    // Walk the enclosing blocks outwards looking for a `try {`.
+    for (let j = start - 1, level = 0; !handled && j >= 0; j--) {
+      const ch = masked[j];
+      if (ch === "}") level++;
+      else if (ch === "{") {
+        if (level > 0) level--;
+        else if (/\btry\s*$/.test(masked.slice(Math.max(0, j - 12), j))) handled = true;
+      }
+    }
+    sites.push({ start, end, specifier, handled });
+  }
+  return sites;
+}
+
+/**
+ * `import("node:sqlite")` in a handled position becomes a rejected promise: there is no such module here, and the library
+ * that probes for it (better-auth, Effect) already catches. Strings that merely contain the text are not touched.
+ */
+export function inlineNodeDynamicImports(source: string): string {
+  if (!/\bimport\s*\(/.test(source)) return source;
+  const sites = dynamicImports(source).filter((s) => s.specifier?.startsWith("node:") && s.handled);
+  let out = source;
+  for (const site of sites.reverse()) {
+    const reject = `Promise.reject(new Error(${JSON.stringify(`${site.specifier} is not available`)}))`;
+    out = out.slice(0, site.start) + reject + out.slice(site.end);
+  }
+  return out;
+}
+
 /** A stable name, as in workerd, never the build machine's path. */
 export const IMPORT_META_URL = "file:///bundle/index.js";
 
@@ -166,6 +339,21 @@ export function inlineImportMeta(body: string): string {
 }
 
 export function neutraliseExports(source: string): string | null {
+  return neutraliseExportsDetailed(source)?.code ?? null;
+}
+
+/**
+ * `neutraliseExports` plus the renamed exports of a bundle's trailing block (`export { Rn as Counter }`), as exported
+ * name -> local name. They are read from `__sbExports`, never declared as top-level names: a bundler exports its
+ * helpers under short names (`__name as D`), and `const D = __name` collided with the bundle's own `var D`.
+ */
+export function neutraliseExportsDetailed(source: string): { code: string; aliases: Record<string, string> } | null {
+  const aliases: Record<string, string> = {};
+  const code = neutraliseExportsText(source, aliases);
+  return code === null ? null : { code, aliases };
+}
+
+function neutraliseExportsText(source: string, aliasOut: Record<string, string>): string | null {
   // `export default class Name extends WorkerEntrypoint {`: the class is the handler.
   if (/^\s*export\s+default\s+class\b/m.test(source)) {
     return source
@@ -182,7 +370,6 @@ export function neutraliseExports(source: string): string | null {
   const block = blocks[blocks.length - 1];
   if (block === undefined) return null;
   let handler: string | null = null;
-  const aliases: string[] = [];
   for (const entry of block[1]
     .split(",")
     .map((part) => part.trim())
@@ -192,11 +379,15 @@ export function neutraliseExports(source: string): string | null {
     const local = parts[1];
     const exported = parts[2] ?? local;
     if (exported === "default") handler = local;
-    // `export { Counter as Counter }` needs no alias; a renamed one does, so `durable_objects` can name the expected class.
-    else if (exported !== local) aliases.push(`const ${exported} = ${local};`);
+    // `export { Counter as Counter }` needs no alias; a renamed one is kept so `durable_objects` can name the expected class.
+    else if (exported !== local) aliasOut[exported] = local;
   }
   if (handler === null) return null;
-  return source.replace(block[0], [`const __sbHandlers = ${handler};`, ...aliases].join("\n"));
+  const names = Object.keys(aliasOut);
+  const table = names.length
+    ? `\nconst __sbExports = { ${names.map((n) => `${JSON.stringify(n)}: ${aliasOut[n]}`).join(", ")} };`
+    : "";
+  return source.replace(block[0], () => `const __sbHandlers = ${handler};${table}`);
 }
 
 /**
@@ -252,9 +443,10 @@ export function wrapNativeFetchHandler(
     prelude.includes("// SUBTLE-JS:BEGIN")
   )
     prelude = pruneSubtle(prelude);
-  const neutralised = neutraliseExports(inlineWorkersImports(source));
+  const exported = neutraliseExportsDetailed(inlineNodeDynamicImports(inlineWorkersImports(source)));
+  const neutralised = exported === null ? null : exported.code;
   // A WorkerEntrypoint may serve only RPC, and a Worker only scheduled() or queue(), as in workerd.
-  if (neutralised === null || !hasEntryHandler(source)) {
+  if (exported === null || neutralised === null || !hasEntryHandler(source)) {
     throw new Error(
       "handler must default-export an object with a fetch(request), scheduled() or queue() method, or a WorkerEntrypoint class",
     );
@@ -283,7 +475,13 @@ export function wrapNativeFetchHandler(
   const wire =
     "__sbInstallFetch();\n" + (hasBindings(bindings) ? `__sbInstallBindings(env, ${JSON.stringify(bindings)});\n` : "");
   const registerDO = bindings.do.length
-    ? `__sbRegisterDO({ ${bindings.do.map((d) => `${d.className}: ${d.className}`).join(", ")} });\n`
+    ? `__sbRegisterDO({ ${bindings.do
+        .map((d) =>
+          Object.hasOwn(exported.aliases, d.className)
+            ? `${JSON.stringify(d.className)}: __sbExports[${JSON.stringify(d.className)}]`
+            : `${d.className}: ${d.className}`,
+        )
+        .join(", ")} });\n`
     : "";
   // Cron / queue / alarm timers for a transport with no broker; the broker transport defines this as a no-op so the
   // emitted module is the same either way. A Worker with only crons needs them too (B22).
@@ -321,8 +519,8 @@ export function readVarsFromEnv(): Record<string, string> {
   if (!isVarsObject(parsed)) throw new Error("SPROUTBOAT_VARS_JSON must be a JSON object");
   return Object.fromEntries(
     Object.entries(parsed).map(([key, value]): [string, string] => {
-      if (!/^[A-Z][A-Z0-9_]*$/.test(key) || !isVarsString(value))
-        throw new Error(`SPROUTBOAT_VARS_JSON.${key} must map an UPPER_SNAKE name to a string`);
+      if (!/^(?!__proto__$)[A-Za-z_][A-Za-z0-9_]*$/.test(key) || !isVarsString(value))
+        throw new Error(`SPROUTBOAT_VARS_JSON.${key} must map a name that is a JavaScript identifier to a string`);
       return [key, value];
     }),
   );

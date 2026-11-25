@@ -1,3 +1,9 @@
+/**
+ * A binding name is any JavaScript identifier made of letters, digits and underscores, as on Cloudflare (`AuthDb`, `BetterAuthSecret_text`, `R2_BUCKET`):
+ * `env.<NAME>` has to be readable as written. Not `__proto__`, which would reach the env object's prototype.
+ */
+export const BINDING_NAME = /^(?!__proto__$)[A-Za-z_][A-Za-z0-9_]*$/;
+export const isBindingName = (name: string): boolean => BINDING_NAME.test(name);
 const slugPattern = /^[a-z0-9](?:[a-z0-9-]{1,30}[a-z0-9])?$/;
 
 /**
@@ -191,13 +197,13 @@ function validateConfig(value: ConfigInput): ConfigValidation {
     else {
       vars = {};
       for (const [key, item] of Object.entries(value.vars)) {
-        if (!/^[A-Z][A-Z0-9_]*$/.test(key) || !isString(item))
-          errors.push(`vars.${key} must be a string environment name`);
+        if (!isBindingName(key) || !isString(item))
+          errors.push(`vars.${key} must be a string with a name that is a JavaScript identifier`);
         else vars[key] = item;
       }
     }
   }
-  const bindingName = /^[A-Z][A-Z0-9_]*$/;
+  const bindingName = BINDING_NAME;
   const stringArray = (
     field: "secrets" | "analytics_engine_datasets",
     item: RegExp,
@@ -233,7 +239,10 @@ function validateConfig(value: ConfigInput): ConfigValidation {
     for (const entry of raw) {
       if (isString(entry)) {
         if (bindingName.test(entry)) out.push(entry);
-        else errors.push(`${field}: "${entry}" must be an UPPER_SNAKE binding name`);
+        else
+          errors.push(
+            `${field}: "${entry}" must be a binding name (a JavaScript identifier: letters, digits and _, not starting with a digit)`,
+          );
       } else if (
         isRecord(entry) &&
         isString(entry.binding) &&
@@ -244,7 +253,7 @@ function validateConfig(value: ConfigInput): ConfigValidation {
       ) {
         out.push({ binding: entry.binding, id: entry.id });
       } else {
-        errors.push(`${field} entries must be an UPPER_SNAKE name or { binding: "NAME", id: "${kind}_…" }`);
+        errors.push(`${field} entries must be a binding name or { binding: "NAME", id: "${kind}_…" }`);
       }
     }
     return out;
@@ -271,13 +280,16 @@ function validateConfig(value: ConfigInput): ConfigValidation {
     for (const entry of raw) {
       if (isString(entry)) {
         if (bindingName.test(entry)) out.push(entry);
-        else errors.push(`queues: "${entry}" must be an UPPER_SNAKE binding name`);
+        else
+          errors.push(
+            `queues: "${entry}" must be a binding name (a JavaScript identifier: letters, digits and _, not starting with a digit)`,
+          );
         if (names.has(entry)) errors.push(`queues: two bindings name the queue "${entry}"`);
         names.add(entry);
         continue;
       }
       if (!isRecord(entry) || !isString(entry.binding) || !bindingName.test(entry.binding)) {
-        errors.push('queues entries must be an UPPER_SNAKE name or { binding: "NAME", ... }');
+        errors.push('queues entries must be a binding name or { binding: "NAME", ... }');
         continue;
       }
       const ref: QueueBinding = { binding: entry.binding };
@@ -323,14 +335,14 @@ function validateConfig(value: ConfigInput): ConfigValidation {
       : isString(value.version_metadata) && bindingName.test(value.version_metadata)
         ? value.version_metadata
         : null;
-  if (version_metadata === null) errors.push("version_metadata must be a binding name (UPPER_SNAKE_CASE)");
+  if (version_metadata === null) errors.push("version_metadata must be a binding name (a JavaScript identifier)");
 
-  const secrets = stringArray("secrets", bindingName, "binding names (UPPER_SNAKE_CASE)");
+  const secrets = stringArray("secrets", bindingName, "binding names (JavaScript identifiers)");
   // Analytics Engine datasets aren't provisioned: the name springs into existence on first writeDataPoint() (#74).
   const analytics_engine_datasets = stringArray(
     "analytics_engine_datasets",
     bindingName,
-    "binding names (UPPER_SNAKE_CASE)",
+    "binding names (JavaScript identifiers)",
   );
   const kv_namespaces = resourceArray("kv_namespaces", "kv");
   const d1_databases = resourceArray("d1_databases", "d1");
@@ -345,7 +357,7 @@ function validateConfig(value: ConfigInput): ConfigValidation {
       durable_objects = {};
       for (const [binding, className] of Object.entries(value.durable_objects)) {
         if (!bindingName.test(binding) || !isString(className) || !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(className)) {
-          errors.push(`durable_objects.${binding} must map an UPPER_SNAKE binding to a class identifier`);
+          errors.push(`durable_objects.${binding} must map a binding name to a class identifier`);
         } else durable_objects[binding] = className;
       }
     }
@@ -362,7 +374,7 @@ function validateConfig(value: ConfigInput): ConfigValidation {
         const binding = row && isString(row.binding) ? row.binding : "";
         const service = row && isString(row.service) ? row.service : "";
         if (!bindingName.test(binding) || !isProjectSlug(service)) {
-          errors.push('services entries must be { binding: "UPPER_SNAKE", service: "project-name" }');
+          errors.push('services entries must be { binding: "NAME", service: "project-name" }');
         } else if (services.some((s) => s.binding === binding)) {
           errors.push(`services: duplicate binding ${binding}`);
         } else services.push({ binding, service });
@@ -389,7 +401,7 @@ function validateConfig(value: ConfigInput): ConfigValidation {
           Object.keys(row).some((key) => key !== "binding" && key !== "limit" && key !== "period")
         ) {
           errors.push(
-            'ratelimiters entries must be { binding: "UPPER_SNAKE", limit: 1..1000000, period: 1..86400 (seconds) }',
+            'ratelimiters entries must be { binding: "NAME", limit: 1..1000000, period: 1..86400 (seconds) }',
           );
         } else if (ratelimiters.some((r) => r.binding === binding)) {
           errors.push(`ratelimiters: duplicate binding ${binding}`);
@@ -432,7 +444,7 @@ function validateConfig(value: ConfigInput): ConfigValidation {
           : isString(raw.binding) && bindingName.test(raw.binding)
             ? raw.binding
             : null;
-      if (binding === null) errors.push("assets.binding must be a binding name (UPPER_SNAKE_CASE)");
+      if (binding === null) errors.push("assets.binding must be a binding name (a JavaScript identifier)");
       const nfh =
         raw.not_found_handling === "none" ||
         raw.not_found_handling === "single-page-application" ||
