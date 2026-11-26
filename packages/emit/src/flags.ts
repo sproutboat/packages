@@ -11,6 +11,8 @@ export const NODEJS_COMPAT_FLAGS: readonly string[] = ["nodejs_compat", "nodejs_
 export const NODEJS_COMPAT_DEFAULT_DATE = "2026-08-04";
 /** `nodejs_compat_populate_process_env` is on by default from this date, with `nodejs_compat` ("Default as of 2025-04-01"). */
 export const POPULATE_PROCESS_ENV_DEFAULT_DATE = "2025-04-01";
+/** "nodejs_compat" means v2 from this date; before it v2 needs "nodejs_compat_v2". */
+export const NODEJS_COMPAT_V2_DEFAULT_DATE = "2024-09-23";
 export const NODEJS_COMPAT_OFF_FLAG = "no_nodejs_compat";
 /** With `no_nodejs_compat` it is how Cloudflare's docs switch the 2026-08-04 default off. Alone it asks for v1, which is not built. */
 export const NODEJS_COMPAT_V2_OFF_FLAG = "no_nodejs_compat_v2";
@@ -77,6 +79,12 @@ export function resolveNodeFlags(flags: readonly string[], declaredDate: string)
   const asked = flags.some((flag) => NODEJS_COMPAT_FLAGS.includes(flag));
   const off = flags.includes(NODEJS_COMPAT_OFF_FLAG);
   const compat = !off && (asked || declaredDate >= NODEJS_COMPAT_DEFAULT_DATE);
+  // Before 2024-09-23 "nodejs_compat" alone is Node.js compatibility v1, which is not built; v2 needs its own flag.
+  if (compat && !flags.includes("nodejs_compat_v2") && declaredDate < NODEJS_COMPAT_V2_DEFAULT_DATE)
+    return {
+      ok: false,
+      message: `"nodejs_compat" selects Node.js compatibility v1 for a date before ${NODEJS_COMPAT_V2_DEFAULT_DATE}, which is not supported; add "nodejs_compat_v2" or use a later compatibility_date`,
+    };
   if (compat && flags.includes(NODEJS_COMPAT_V2_OFF_FLAG))
     return {
       ok: false,

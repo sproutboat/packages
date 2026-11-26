@@ -129,6 +129,16 @@ describe("Node support is decided from the declared date, never from the floored
     );
   });
 
+  test("before 2024-09-23 nodejs_compat alone is Node.js compatibility v1, which is refused; v2 needs its own flag", () => {
+    const refused = resolveNodeFlags(["nodejs_compat"], "2024-09-22");
+    expect(refused.ok).toBe(false);
+    expect(refused.ok ? "" : refused.message).toContain("compatibility v1");
+    expect(resolveNodeFlags(["nodejs_compat", "nodejs_compat_v2"], "2024-09-22").ok).toBe(true);
+    expect(resolveNodeFlags(["nodejs_compat_v2"], "2024-09-22").ok).toBe(true);
+    expect(resolveNodeFlags(["nodejs_compat"], "2024-09-23").ok).toBe(true);
+    expect(resolveNodeFlags([], "2024-09-22").ok).toBe(true);
+  });
+
   test("the date table of flags.ts", () => {
     const node = (flags: string[], date: string) => {
       const resolved = resolveNodeFlags(flags, date);

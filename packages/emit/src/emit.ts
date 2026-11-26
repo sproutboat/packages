@@ -154,29 +154,38 @@ async function emitChecked(
   let assets = options.bakedAssets ?? assetsSettings(metadata);
   if (transport !== "embedded") assets = undefined;
   let wrapped: string;
+  let wrapWith: (prelude: string) => string;
   try {
-    wrapped = wrapNativeFetchHandler(
-      bundled,
-      options.prelude ?? "",
-      // SAFETY: the wrapper only JSON.stringifies vars into `const env = ...`, so a JSON value is as good as a string here.
-      bindings.runtime.vars as { [name: string]: string },
-      bindings.runtime,
-      options.port,
-      metadata.compatibility_date,
-      options.name,
-      assets,
-      transport,
-      bindings.versionMetadata === undefined || options.versionMetadata === undefined
-        ? undefined
-        : { binding: bindings.versionMetadata, ...options.versionMetadata },
-      options.subtle ?? "auto",
-    );
+    wrapWith = (prelude) =>
+      wrapNativeFetchHandler(
+        bundled,
+        prelude,
+        // SAFETY: the wrapper only JSON.stringifies vars into `const env = ...`, so a JSON value is as good as a string here.
+        bindings.runtime.vars as { [name: string]: string },
+        bindings.runtime,
+        options.port,
+        metadata.compatibility_date,
+        options.name,
+        assets,
+        transport,
+        bindings.versionMetadata === undefined || options.versionMetadata === undefined
+          ? undefined
+          : { binding: bindings.versionMetadata, ...options.versionMetadata },
+        options.subtle ?? "auto",
+      );
+    wrapped = wrapWith(options.prelude ?? "");
   } catch (cause) {
     throw new EmitError([issue("handler-missing", cause instanceof Error ? cause.message : String(cause))]);
   }
-  const at = wrapped.indexOf(REGION_MARKER);
+  // A prelude that mentions the marker (in a comment) would be mistaken for the region's start: the wrapper's own output,
+  // without a prelude, says where its region begins.
+  const preludeHasMarker = options.prelude?.includes(REGION_MARKER) === true;
+  const wrappedBare = preludeHasMarker ? wrapWith("") : wrapped;
+  const at = wrappedBare.indexOf(REGION_MARKER);
   if (at < 0) throw new EmitError([issue("bundle-failed", "the wrapper's output has no region marker")]);
-  const region = wrapped.slice(at);
+  const region = wrappedBare.slice(at);
+  if (preludeHasMarker && !wrapped.endsWith(region))
+    throw new EmitError([issue("bundle-failed", "the wrapper's region differs with the prelude")]);
   return {
     source: options.prelude === undefined ? region : wrapped,
     region,

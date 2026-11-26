@@ -10,7 +10,14 @@ import type { NodeFlags } from "./flags";
 import { MAX_BUNDLED_BYTES } from "./limits";
 import { MODULE_TYPES, type ModuleInput } from "./metadata";
 import { NODE_SHIMS, SOCKET_NODE_SHIMS } from "./node-shims";
-import { bundlerIssues, checkCodeModule, noSuchModule, scanImports } from "./source-check";
+import {
+  bundlerIssues,
+  checkCodeModule,
+  importedNames,
+  noSuchModule,
+  scanImports,
+  type SourceKind,
+} from "./source-check";
 
 /** The date a CLI project (which has no flags) gets `process` and `Buffer` for its own code. Cloudflare derives them from flags. */
 export const PROCESS_GLOBAL_DATE = "2026-11-23";
@@ -185,19 +192,25 @@ function importsName(source: string, name: string): boolean {
 }
 
 /** `Buffer`, `process` and `global` as free names: bound to bundled code, as Workers has them under `nodejs_compat`. */
-function bindNodeGlobals(source: string): string {
+function bindNodeGlobals(source: string, kind: SourceKind): string {
+  // An ES module's imports are read from its syntax tree (a declaration may span lines); a CommonJS one has `require`.
+  let imported: Set<string> | null | undefined;
+  const names = (name: string): boolean => {
+    if (kind === "esm") imported ??= importedNames(source);
+    return imported ? imported.has(name) : importsName(source, name);
+  };
   const usesBuffer =
     /(?:^|[^.\w$])Buffer\s*[.(]/m.test(source) &&
-    !importsName(source, "Buffer") &&
+    !names("Buffer") &&
     !/(?:const|let|var|function|class)\s+(?:\{\s*)?Buffer\b/.test(source);
   const usesProcess =
     /(?:^|[^.\w$])process\s*\./m.test(source) &&
-    !importsName(source, "process") &&
+    !names("process") &&
     !/(?:const|let|var|function)\s+(?:\{\s*)?process\b/.test(source);
   const usesGlobal =
     /(?:^|[^.\w$])global\s*\./m.test(source) && !/(?:const|let|var|function)\s+(?:\{\s*)?global\b/.test(source);
   if (!usesBuffer && !usesProcess && !usesGlobal) return source;
-  const esm = /^[^\S\n]*(?:import|export)\s/m.test(source);
+  const esm = kind === "esm";
   let prefix = "";
   if (usesBuffer)
     prefix += esm ? `import { Buffer } from "node:buffer";\n` : `var { Buffer } = require("node:buffer");\n`;
@@ -210,11 +223,15 @@ function bindNodeGlobals(source: string): string {
 }
 
 /** What the CLI's plugin does to each file: rename shadowing function names, and (under `nodejs_compat`) bind free globals. */
-export function prepareModuleSource(source: string, input: Pick<BundleInput, "compatibilityDate" | "node">): string {
+export function prepareModuleSource(
+  source: string,
+  input: Pick<BundleInput, "compatibilityDate" | "node">,
+  kind: SourceKind,
+): string {
   if (input.compatibilityDate < SOCKETS_DATE) return source;
   const renamed = renameShadowing(source);
   if (!input.node.compat) return renamed;
-  return bindNodeGlobals(renamed);
+  return bindNodeGlobals(renamed, kind);
 }
 
 /** Every code module is checked before the bundler (or anything else that parses) sees it: see source-check.ts. */
@@ -321,7 +338,7 @@ export async function bundleModules(input: BundleInput): Promise<string> {
   const sockets = input.compatibilityDate >= SOCKETS_DATE;
 
   const mainText = text(main);
-  const prepared = prepareModuleSource(mainText, input);
+  const prepared = prepareModuleSource(mainText, input, "esm");
   if (scanImports(main.name, prepared).every((entry) => EXTERNAL.has(entry.path))) return prepared;
 
   const shims: Map<string, string> = new Map(Object.entries(NODE_SHIMS));
@@ -379,11 +396,12 @@ export async function bundleModules(input: BundleInput): Promise<string> {
               module.content instanceof Uint8Array ? module.content : new TextEncoder().encode(module.content);
             return { contents: latin1Module(bytes), loader: "js" as const };
           }
+          // A sourcemap never reaches a loader: the resolver refuses it.
+          if (module.type === "sourcemap") throw noSuchModule(module.name, "");
           const original = text(module);
-          const contents = prepareModuleSource(original, input);
+          const contents = prepareModuleSource(original, input, module.type);
           // The checks ran on the upload; what the bundler is handed is checked again where it differs.
-          if (contents !== original && (module.type === "esm" || module.type === "cjs"))
-            checkCodeModule(module.name, contents, module.type);
+          if (contents !== original) checkCodeModule(module.name, contents, module.type);
           return { contents, loader: "js" as const };
         };
         build.onLoad({ filter: /.*/, namespace: NS_MODULE }, (args) => load(args, NS_MODULE));

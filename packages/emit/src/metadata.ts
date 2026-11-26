@@ -73,7 +73,7 @@ export type WorkerBinding =
   | { type: "version_metadata"; name: string };
 
 /** What a client uploads: the fields of WorkerMetadata the emitter does not derive. */
-export type UploadMetadata = Omit<WorkerMetadata, "declared_compatibility_date" | "node">;
+export type UploadMetadata = Omit<WorkerMetadata, "declared_compatibility_date" | "node" | "message">;
 
 export type WorkerBindingType = WorkerBinding["type"];
 
@@ -966,7 +966,8 @@ function jsonLiteralBytes(text: string): number {
   let bytes = 2;
   for (let at = 0; at < text.length; at += 1) {
     const code = text.charCodeAt(at);
-    if (code < 32) bytes += 6;
+    if (code === 8 || code === 9 || code === 10 || code === 12 || code === 13) bytes += 2;
+    else if (code < 32) bytes += 6;
     else if (code === 34 || code === 92) bytes += 2;
     else if (code < 0x80) bytes += 1;
     else if (code < 0x800) bytes += 2;
@@ -1059,7 +1060,8 @@ export function validateModules(
       bundledBytes += bytes;
     } else if (type === "text") {
       codeBytes += bytes;
-      bundledBytes += content instanceof Uint8Array ? bytes : jsonLiteralBytes(content);
+      // The bundler decodes bytes as UTF-8 and prints them as a string literal, so both forms are measured alike.
+      bundledBytes += jsonLiteralBytes(content instanceof Uint8Array ? new TextDecoder().decode(content) : content);
     }
   });
   if (dataBytes > MAX_DATA_TOTAL_BYTES)

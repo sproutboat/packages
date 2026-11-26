@@ -2,7 +2,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { EmitError, emitLocal, type EmitReason, type ModuleInput } from "./index";
-import { checkCodeModule } from "./source-check";
+import { checkCodeModule, positionOf } from "./source-check";
 import { bundlerConfig } from "./virtual-bundle";
 
 const HANDLER = `export default { fetch() { return new Response("ok"); } };`;
@@ -320,6 +320,25 @@ describe("two lexers fooled together (R1): the reviewer's input, and a sweep wit
         }
         expect(await Bun.file(marker).exists()).toBe(false);
       }
+  });
+});
+
+describe("positions count every ECMAScript line terminator", () => {
+  test("LF, CR, CR LF (once), U+2028 and U+2029", () => {
+    const at = (text: string) => positionOf(text, text.indexOf("X"));
+    expect(at("a\nbX")).toEqual({ line: 2, column: 2 });
+    expect(at("a\rbX")).toEqual({ line: 2, column: 2 });
+    expect(at("a\r\nbX")).toEqual({ line: 2, column: 2 });
+    expect(at("a\u2028b\u2029X")).toEqual({ line: 3, column: 1 });
+    expect(at("a\r\r\nX")).toEqual({ line: 3, column: 1 });
+  });
+
+  test("a refusal on the second line of a CR-only module says line 2", async () => {
+    const error = await refusal([
+      esm("index.js", `const a = 1;\rimport("x", { with: { type: "json" } });\r${HANDLER}`),
+    ]);
+    expect(error.reason).toBe("import-attribute-refused");
+    expect(error.message).toContain("line 2, column");
   });
 });
 

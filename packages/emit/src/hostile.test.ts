@@ -26,6 +26,8 @@ async function outcome(modules: ModuleInput[]): Promise<{ reason: EmitReason | "
   return { reason: "emitted", message: "" };
 }
 
+/** Whole copies of `unit` only, so the source ends at a complete statement at every length. */
+const whole = (unit: string, length: number) => unit.repeat(Math.floor(length / unit.length));
 const fill = (unit: string, length: number) => unit.repeat(Math.ceil(length / unit.length)).slice(0, length);
 
 describe("every check runs in time linear in the input (S1)", () => {
@@ -51,15 +53,17 @@ describe("every check runs in time linear in the input (S1)", () => {
   const valid = {
     "a long run of newlines": (n) => HANDLER + "\n".repeat(n),
     "a long run of spaces": (n) => HANDLER + " ".repeat(n),
-    "regex literals": (n) => HANDLER + fill("x = /a/g;\n", n),
-    "process and Buffer uses": (n) => HANDLER + fill("process.env.X; Buffer.from(y);\n", n),
-    "const keywords": (n) => HANDLER + fill("const a = 1;\n", n),
+    "regex literals": (n) => HANDLER + whole("x = /a/g;\n", n),
+    "process and Buffer uses": (n) => HANDLER + whole("process.env.X; Buffer.from(y);\n", n),
+    "const keywords": (n) => HANDLER + whole("{ const a = 1; }\n", n),
   } satisfies { [name: string]: (length: number) => string };
   for (const [name, make] of Object.entries(valid)) {
     test(`${name}: four times the input takes about four times as long`, async () => {
       const time = async (length: number) => {
         const started = performance.now();
-        await outcome([esm("index.js", make(length))]);
+        const result = await outcome([esm("index.js", make(length))]);
+        // Only an emitted module is a measurement: a refusal would time the wrong path.
+        expect(result.reason).toBe("emitted");
         return performance.now() - started;
       };
       await time(64 * 1024);
@@ -145,6 +149,28 @@ describe("size caps are checked before anything is bundled (S3)", () => {
       message = error instanceof EmitError ? error.message : String(error);
     }
     expect(message).toBe(`the bundled module is ${Buffer.byteLength(output)} bytes; at most ${MAX_BUNDLED_BYTES}`);
+  });
+
+  test("a text module given as bytes is measured as the literal it becomes, like the string form (CodeRabbit)", async () => {
+    const modules = (content: Uint8Array | string): ModuleInput[] => [
+      esm("index.js", `import a from "./a.txt";\n${HANDLER}`),
+      { name: "a.txt", type: "text", content },
+    ];
+    const bytes = new Uint8Array(3 * MIB).fill(1);
+    const fromBytes = await outcome(modules(bytes));
+    expect(fromBytes.reason).toBe("limit-exceeded");
+    expect(fromBytes.message).toMatch(/grow to \d+ bytes once text and data modules become string literals/);
+    expect((await outcome(modules("\u0001".repeat(3 * MIB)))).message).toBe(fromBytes.message);
+  });
+
+  test("short JSON escapes count 2 bytes, the other control characters 6 (CodeRabbit)", async () => {
+    // 3 MiB of newlines print as 6 MiB: well inside the cap. The same count of \u0001 prints as 18 MiB: refused.
+    const text = (content: string): ModuleInput[] => [
+      esm("index.js", `import a from "./a.txt";\n${HANDLER}`),
+      { name: "a.txt", type: "text", content },
+    ];
+    expect((await outcome(text("\n".repeat(3 * MIB)))).reason).toBe("emitted");
+    expect((await outcome(text("\u0001".repeat(3 * MIB)))).reason).toBe("limit-exceeded");
   });
 
   test("text that stays under the expanded cap still bundles", async () => {

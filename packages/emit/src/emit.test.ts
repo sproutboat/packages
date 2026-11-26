@@ -353,6 +353,42 @@ describe("hostile input", () => {
     expect((await runBundle(fine.bundled, {})).body).toBe("7");
   });
 
+  const globals = { main_module: "index.js", compatibility_date: "2026-11-22", compatibility_flags: ["nodejs_compat"] };
+  const useBuffer = `export default { fetch() { return new Response(Buffer.from("x").toString("hex")); } };`;
+
+  test("a Buffer imported by a declaration that spans lines is not imported again (CodeRabbit)", async () => {
+    const source = `import {\n  Buffer\n} from "node:buffer";\n${useBuffer}`;
+    const result = await emitLocal({ modules: [esm("index.js", source)], metadata: globals }, { name: "app" });
+    expect((await runBundle(result.bundled, {})).body).toBe("78");
+  });
+
+  test("a CommonJS module that has an import-looking line in a comment still gets the require prefix (CodeRabbit)", async () => {
+    const cjs = `/*\nimport x from "y";\n*/\nmodule.exports = Buffer.from("x").toString("hex");`;
+    const result = await emitLocal(
+      {
+        modules: [
+          esm("index.js", `import v from "./a.cjs"; export default { fetch() { return new Response(v); } };`),
+          { name: "a.cjs", type: "cjs", content: cjs },
+        ],
+        metadata: globals,
+      },
+      { name: "app" },
+    );
+    expect((await runBundle(result.bundled, {})).body).toBe("78");
+  });
+
+  test("the region starts at the wrapper's own marker, even when the prelude mentions it (CodeRabbit)", async () => {
+    const prelude = "// the Cloud cuts at globalThis.__sbCompat = and nothing here may be mistaken for it\n";
+    const plain = await emitLocal({ modules: [esm("index.js", useBuffer)], metadata: globals }, { name: "app" });
+    const withPrelude = await emitLocal(
+      { modules: [esm("index.js", useBuffer)], metadata: globals },
+      { name: "app", prelude },
+    );
+    expect(withPrelude.region).toBe(plain.region);
+    expect(withPrelude.source.startsWith(prelude)).toBe(true);
+    expect(withPrelude.source.endsWith(withPrelude.region)).toBe(true);
+  });
+
   test("a macro is never run: nothing is written, nothing is read", async () => {
     const marker = `/tmp/sb-emit-macro-${crypto.randomUUID()}`;
     await refusal(

@@ -14,13 +14,17 @@ export const noSuchModule = (specifier: string, importer: string) =>
     issue("no-such-module", `No such module "${specifier}"${importer === "" ? "" : `. Imported from "${importer}"`}`),
   ]);
 
-/** 1-based line and column of a character offset. */
+/** 1-based line and column of a character offset. A line ends at LF, CR, U+2028 or U+2029; CR LF counts once. */
 export function positionOf(source: string, offset: number) {
   let line = 1;
   let lineStart = 0;
-  for (let at = source.indexOf("\n"); at !== -1 && at < offset; at = source.indexOf("\n", at + 1)) {
-    line += 1;
-    lineStart = at + 1;
+  for (let at = 0; at < offset && at < source.length; at += 1) {
+    const code = source.charCodeAt(at);
+    if (code === 13 && source.charCodeAt(at + 1) === 10) continue;
+    if (code === 10 || code === 13 || code === 0x2028 || code === 0x2029) {
+      line += 1;
+      lineStart = at + 1;
+    }
   }
   return { line, column: offset - lineStart + 1 };
 }
@@ -94,6 +98,18 @@ const parseSource = (source: string, kind: SourceKind): ESTree.Program =>
   kind === "esm"
     ? parseModule(source, { ranges: POSITIONS })
     : parseScript(source, { ranges: POSITIONS, globalReturn: true, webcompat: true });
+
+/** The local names the top-level imports of an ES module bind, or null when it does not parse. */
+export function importedNames(source: string): Set<string> | null {
+  try {
+    const names = new Set<string>();
+    for (const node of parseModule(source, { ranges: POSITIONS }).body)
+      if (node.type === "ImportDeclaration") for (const specifier of node.specifiers) names.add(specifier.local.name);
+    return names;
+  } catch {
+    return null;
+  }
+}
 
 /** Whether `source` is a valid ES module (what a CommonJS module cannot be if it uses `import`, `export` or top-level `await`). */
 function parsesAsModule(source: string): boolean {
