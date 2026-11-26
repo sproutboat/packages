@@ -8,10 +8,10 @@ import { createD1Store } from "../../wire/src/d1";
 const source = readFileSync(new URL("./native-fetch-prelude.js", import.meta.url), "utf8");
 let store;
 // oxlint-disable-next-line no-function-constructor -- the prelude is prepended as text in production too
-const { makeD1 } = new Function(
+const { makeD1, doSql } = new Function(
   "Porffor",
   "__testCall",
-  `${source}\n__sbCall = __testCall; return { makeD1: __sbMakeD1 };`,
+  `${source}\n__sbCall = __testCall; return { makeD1: __sbMakeD1, doSql: __sbDOSql };`,
 )({ c: () => "" }, (json) => {
   const msg = JSON.parse(json);
   try {
@@ -472,9 +472,26 @@ test("from 2026-11-03: every number binds as a REAL, as in workerd", async () =>
   expect(await old.prepare("SELECT typeof(?1) AS a").bind(1).first("a")).toBe("integer");
 });
 
-test("from 2026-10-24: a Date binds as its ISO string (an invalid Date as NULL), as D1 serialises it (Better Auth sign-up)", async () => {
+test("from 2026-10-24: a Date is refused with workerd's D1_TYPE_ERROR (Cloudflare does not convert it; Better Auth's adapter does before bind)", async () => {
   const DB = fresh("2026-10-24");
   const when = new Date("2026-11-26T01:02:03.456Z");
-  const row = await DB.prepare("SELECT ?1 AS at, ?2 AS bad").bind(when, new Date("nope")).first();
-  expect(row).toEqual({ at: "2026-11-26T01:02:03.456Z", bad: null });
+  expect(caught(() => DB.prepare("SELECT ?1").bind(when))).toBe(
+    `D1_TYPE_ERROR: Type 'object' not supported for value '${String(when)}'`,
+  );
+  expect(caught(() => DB.prepare("SELECT ?1").bind(new Date("nope")))).toBe(
+    "D1_TYPE_ERROR: Type 'object' not supported for value 'Invalid Date'",
+  );
+  // the ISO string and the epoch number the adapter sends instead are accepted
+  expect(await DB.prepare("SELECT ?1 AS a, ?2 AS b").bind(when.toISOString(), when.getTime()).first()).toEqual({
+    a: "2026-11-26T01:02:03.456Z",
+    b: when.getTime(),
+  });
+});
+
+test("durable object SQL on the pre-v3 path refuses a Date too, as D1 does", async () => {
+  fresh("2026-10-24");
+  const sql = doSql("Counter", "id1");
+  expect(caught(() => sql.exec("SELECT ?", new Date(0)))).toMatch(
+    /^D1_TYPE_ERROR: Type 'object' not supported for value '/,
+  );
 });

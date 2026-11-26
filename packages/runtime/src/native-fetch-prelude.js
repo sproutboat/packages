@@ -5283,6 +5283,21 @@ Object.defineProperty(globalThis.crypto, "DigestStream", {
 });
 // SUBTLE-JS:END
 
+// V (128 * N * r bytes) is held to 8 MiB, or an eighth of the worker's limit up to 32 MiB, by keeping every k-th block:
+// about (k + 3) / 4 times the time, the same output. A k above 8 throws; an allocation the cgroup refuses is an OOM kill.
+function __sbScryptStride(N, r) {
+  const need = 128 * Number(N) * Number(r);
+  if (!(need > 0) || Number(N) * Number(r) > 1048576) return 1; // the native code refuses these
+  const limit = Number(__sbEnv("SB_MEMORY_LIMIT"));
+  const budget = limit > 0 ? Math.min(33554432, Math.max(8388608, Math.floor(limit / 8))) : 8388608;
+  const k = Math.ceil(need / budget);
+  if (k > 8)
+    throw new RangeError(
+      "Invalid scrypt params: N=" + N + " r=" + r + " needs " + Math.ceil(need / 1048576) + " MiB, more than this worker can spare (at most " +
+        Math.floor((budget * 8) / 1048576) + " MiB); lower N or r, or raise memory-mb",
+    );
+  return k;
+}
 // #153: scrypt verification, for migrating password hashes made elsewhere. Deliberately verify-only: a migration
 // tool, not a KDF for new credentials (use HMAC/PBKDF2 via crypto.subtle). `expected` is a hex string or bytes.
 if (globalThis.crypto.scryptVerify == null) {
@@ -5300,14 +5315,16 @@ if (globalThis.crypto.scryptVerify == null) {
       String(r),
       String(par),
       String(want.length),
+      String(__sbScryptStride(N, r)),
     );
     return dk.length === want.length && __sbEqCt(dk, want);
   };
 }
 // node:crypto scrypt for bundles: the CLI's node:crypto shim calls this. password and salt are BufferSources (a string is UTF-8), the result an ArrayBuffer.
-// The same native code as crypto.scryptVerify (N * r up to 2^20, a key of up to 1,024 bytes); the V array is 128 * N * r bytes of the worker's memory.
+// The same native code as crypto.scryptVerify (N * r up to 2^20, a key of up to 1,024 bytes); the V array is held to __sbScryptStride's budget.
 globalThis.__sbScrypt = function (password, salt, N, r, p, keylen) {
-  const dk = __sbScryptRaw(__sbToBytes(password), __sbToBytes(salt), String(N), String(r), String(p), String(keylen));
+  const stride = __sbScryptStride(N, r);
+  const dk = __sbScryptRaw(__sbToBytes(password), __sbToBytes(salt), String(N), String(r), String(p), String(keylen), String(stride));
   if (dk === "") throw new RangeError("Invalid scrypt params: memory limit exceeded");
   return __sbBufFrom(dk);
 };
@@ -5679,28 +5696,41 @@ static uint64_t sb_integerify(const uint32_t* b, size_t r) {
 }
 // scrypt(pw, salt, N, r, p) -> dk[dklen]. Returns 0 on success, -1 on bad
 // params or allocation failure. Caps N*r so a bad config cannot ask for GB.
+// STRIDE is the time-memory trade-off of the scrypt paper: V keeps every STRIDE-th block (N/STRIDE of them) and the
+// second loop recomputes a missing one from the block before it, on average (STRIDE-1)/2 more BlockMix calls per
+// step. The output is the same for every STRIDE; 1 keeps all of V.
 static int sb_scrypt(const unsigned char* pw, size_t pwlen, const unsigned char* salt, size_t saltlen,
-                     uint64_t N, uint32_t r, uint32_t p, unsigned char* dk, size_t dklen) {
+                     uint64_t N, uint32_t r, uint32_t p, unsigned char* dk, size_t dklen, uint32_t stride) {
   if (r == 0 || p == 0 || N < 2 || (N & (N - 1)) != 0) return -1;
-  if ((uint64_t)r * N > (1ULL << 20)) return -1; // <= 128 MiB of V
+  if ((uint64_t)r * N > (1ULL << 20)) return -1; // <= 128 MiB of V before the trade-off
+  if (stride == 0 || stride > N) stride = 1;
   size_t blk = 128 * (size_t)r;                  // one B block, bytes
+  size_t words = blk / 4;
+  uint64_t slots = (N + stride - 1) / stride;
   unsigned char* b = (unsigned char*)malloc(blk * p);
-  uint32_t* v = (uint32_t*)malloc(blk * (size_t)N);
-  uint32_t* xy = (uint32_t*)malloc(blk * 2);
+  uint32_t* v = (uint32_t*)malloc(blk * (size_t)slots);
+  uint32_t* xy = (uint32_t*)malloc(blk * 3);     // y, then the block being recomputed
   if (!b || !v || !xy) { free(b); free(v); free(xy); return -1; }
   sb_pbkdf2_hmac256(pw, pwlen, salt, saltlen, 1, b, blk * p);
   for (uint32_t i = 0; i < p; i++) {
     uint32_t* x = (uint32_t*)(b + (size_t)i * blk);
     uint32_t* y = xy;
+    uint32_t* t = xy + 2 * words;
     for (uint64_t j = 0; j < N; j++) {
-      memcpy(v + j * (blk / 4), x, blk);
+      if (j % stride == 0) memcpy(v + (j / stride) * words, x, blk);
       sb_blockmix(x, y, r);
       memcpy(x, y, blk);
     }
     for (uint64_t j = 0; j < N; j++) {
       uint64_t k = sb_integerify(x, r) & (N - 1);
-      const uint32_t* vk = v + k * (blk / 4);
-      for (size_t w = 0; w < blk / 4; w++) x[w] ^= vk[w];
+      uint64_t base = k - k % stride;
+      const uint32_t* vk = v + (base / stride) * words;
+      if (base != k) {
+        memcpy(t, vk, blk);
+        for (uint64_t m = base; m < k; m++) { sb_blockmix(t, y, r); memcpy(t, y, blk); }
+        vk = t;
+      }
+      for (size_t w = 0; w < words; w++) x[w] ^= vk[w];
       sb_blockmix(x, y, r);
       memcpy(x, y, blk);
     }
@@ -6074,7 +6104,7 @@ function __sbHmacRaw(algoStr, key, data) {
 // #153 — scrypt derivation. All params are decimal strings. Returns the derived
 // key as a bytestring, or '' on bad params / allocation failure.
 // oxlint-disable-next-line no-unused-vars -- read inside the RawC block, not by JS.
-function __sbScryptRaw(pw, salt, nStr, rStr, pStr, dkLenStr) {
+function __sbScryptRaw(pw, salt, nStr, rStr, pStr, dkLenStr, strideStr) {
   let out = "";
   // oxlint-disable-next-line no-unused-expressions -- Porffor.c`...` is inline C the compiler consumes, not a JS expression.
   Porffor.c`
@@ -6088,17 +6118,18 @@ function __sbScryptRaw(pw, salt, nStr, rStr, pStr, dkLenStr) {
     unsigned char* __sc = __salt_raw == 0 ? (unsigned char*)malloc(__sl ? __sl : 1) : 0;
     if (__sc) memcpy(__sc, __s, __sl);
 
-    long __N = 0, __r = 0, __pp = 0, __dk = 0;
+    long __N = 0, __r = 0, __pp = 0, __dk = 0, __st = 1;
     { const char* q; size_t ql; char* qo = 0; char nb[24];
       porf_native_fetch_read_value(nStr, &q, &ql, &qo); { size_t k = ql < 23 ? ql : 23; memcpy(nb, q, k); nb[k] = 0; } if (qo) free(qo); __N = atol(nb);
       porf_native_fetch_read_value(rStr, &q, &ql, &qo); { size_t k = ql < 23 ? ql : 23; memcpy(nb, q, k); nb[k] = 0; } if (qo) free(qo); __r = atol(nb);
       porf_native_fetch_read_value(pStr, &q, &ql, &qo); { size_t k = ql < 23 ? ql : 23; memcpy(nb, q, k); nb[k] = 0; } if (qo) free(qo); __pp = atol(nb);
       porf_native_fetch_read_value(dkLenStr, &q, &ql, &qo); { size_t k = ql < 23 ? ql : 23; memcpy(nb, q, k); nb[k] = 0; } if (qo) free(qo); __dk = atol(nb);
+      porf_native_fetch_read_value(strideStr, &q, &ql, &qo); { size_t k = ql < 23 ? ql : 23; memcpy(nb, q, k); nb[k] = 0; } if (qo) free(qo); __st = atol(nb);
     }
     if (__pc && __sc && __dk > 0 && __dk <= 1024) {
       unsigned char* __d = (unsigned char*)malloc((size_t)__dk);
       if (__d) {
-        if (sb_scrypt(__pc, __pl, __sc, __sl, (uint64_t)__N, (uint32_t)__r, (uint32_t)__pp, __d, (size_t)__dk) == 0)
+        if (sb_scrypt(__pc, __pl, __sc, __sl, (uint64_t)__N, (uint32_t)__r, (uint32_t)__pp, __d, (size_t)__dk, (uint32_t)__st) == 0)
           out = porf_box((f64)porf_native_fetch_alloc_bytestring((const char*)__d, (size_t)__dk), 195);
         free(__d);
       }
@@ -10310,8 +10341,6 @@ function __sbD1Param(value, strict) {
     for (let i = 0; i < bytes.length; i++) hex += (bytes[i] < 16 ? "0" : "") + bytes[i].toString(16);
     return { $blob: hex };
   }
-  // D1 serialises a Date as JSON does: its ISO string, null when invalid. Strict calls refused it before.
-  if (value instanceof Date) return value.getTime() === value.getTime() ? value.toISOString() : null;
   if (!strict || value === null || value === true || value === false || Object(value) instanceof Number || __sbIsStr(value)) return value;
   // oxlint-disable-next-line anti-slop/no-runtime-typeof -- workerd's D1_TYPE_ERROR names the value's typeof
   throw new Error("D1_TYPE_ERROR: Type '" + typeof value + "' not supported for value '" + String(value) + "'");
