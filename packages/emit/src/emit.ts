@@ -1,6 +1,7 @@
 /**
- * `emitFromBundle`: modules plus Cloudflare metadata in, the module Sproutboat compiles out. The same function runs in the
- * Cloud builder and on a developer's machine; a host that has the prelude passes it, the builder passes none.
+ * Modules plus Cloudflare metadata in, the module Sproutboat compiles out. One implementation, two entry points:
+ * `emitForCloud` for an upload that reaches the Cloud (every safety check is a required option), and `emitLocal` for the
+ * developer's own machine (the CLI's bundle and config; each check is opt-in). A host that has the prelude passes it.
  */
 import {
   neutraliseExportsDetailed,
@@ -14,12 +15,15 @@ import { EmitError, issue } from "./errors";
 import type { Input } from "./json";
 import {
   validateMetadata,
+  validateMetadataForCloud,
   validateModules,
+  type CloudValidation,
   type ModuleInput,
   type ValidateMetadataOptions,
   stripSecretValues,
   type WorkerMetadata,
 } from "./metadata";
+import { MAX_BUNDLED_BYTES } from "./limits";
 import { bundleModules, exportedNames } from "./virtual-bundle";
 
 /** Where the Cloud's own region starts: sproutd cuts a generated file here and at the last `export default {`. */
@@ -51,7 +55,13 @@ export type EmitOptions = {
   versionMetadata?: { id: string; tag: string; timestamp: string };
   /** Files baked into the module (a standalone build). Without it a Cloud emit carries the assets settings only. */
   bakedAssets?: BakedAssets;
+  /** Opt-in checks. `emitForCloud` takes a required CloudValidation instead. */
   validation?: ValidateMetadataOptions;
+};
+
+export type CloudEmitOptions = Omit<EmitOptions, "validation"> & {
+  /** Every field is required: a Cloud upload is always checked against the clock, the generation, the floor and the asset store date. */
+  validation: CloudValidation;
 };
 
 export type EmitResult = {
@@ -80,8 +90,28 @@ function assetsSettings(metadata: WorkerMetadata): BakedAssets | undefined {
   };
 }
 
-export async function emitFromBundle(input: EmitInput, options: EmitOptions): Promise<EmitResult> {
-  const checked = validateMetadata(input.metadata, options.validation);
+/**
+ * Emit an upload that reaches the Cloud. Refuses a date in the future or newer than the generation, raises a Cloudflare
+ * date to the floor, and refuses an assets binding below the asset store date, none of which can be left out.
+ */
+export async function emitForCloud(input: EmitInput, options: CloudEmitOptions): Promise<EmitResult> {
+  const checked = validateMetadataForCloud(input.metadata, options.validation);
+  return emitChecked(input, options, checked);
+}
+
+/**
+ * Emit on the developer's machine, from a CLI bundle and config: every check of `ValidateMetadataOptions` is opt-in, and a
+ * missing one fails open (no floor, no date limits, no asset store date). Never call this for an upload that reaches the Cloud.
+ */
+export async function emitLocal(input: EmitInput, options: EmitOptions): Promise<EmitResult> {
+  return emitChecked(input, options, validateMetadata(input.metadata, options.validation));
+}
+
+async function emitChecked(
+  input: EmitInput,
+  options: EmitOptions | CloudEmitOptions,
+  checked: ReturnType<typeof validateMetadata>,
+): Promise<EmitResult> {
   if (!checked.ok) throw new EmitError(checked.errors);
   const metadata = checked.value;
   const moduleIssues = validateModules(input.modules, { mainModule: metadata.main_module });
@@ -101,8 +131,17 @@ export async function emitFromBundle(input: EmitInput, options: EmitOptions): Pr
     modules: input.modules,
     mainModule: metadata.main_module,
     compatibilityDate: metadata.compatibility_date,
-    compatibilityFlags: metadata.compatibility_flags,
+    node: metadata.node,
+    processEnvNames: [
+      ...Object.keys(bindings.runtime.vars),
+      ...bindings.runtime.secrets,
+      ...(bindings.versionMetadata === undefined ? [] : [bindings.versionMetadata]),
+    ],
   });
+  if (bundled.length > MAX_BUNDLED_BYTES)
+    throw new EmitError([
+      issue("limit-exceeded", `the module is ${bundled.length} bytes; at most ${MAX_BUNDLED_BYTES}`, "modules"),
+    ]);
   checkCapabilities(bundled, metadata.compatibility_date);
 
   const exported = neutraliseExportsDetailed(bundled);

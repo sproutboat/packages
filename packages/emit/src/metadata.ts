@@ -4,7 +4,7 @@
  */
 import { isBindingName } from "@sproutboat/config";
 import { issue, type EmitIssue, type EmitReason } from "./errors";
-import { SUPPORTED_COMPATIBILITY_FLAGS } from "./flags";
+import { SUPPORTED_COMPATIBILITY_FLAGS, resolveNodeFlags, type NodeFlags } from "./flags";
 import {
   isArray,
   isBoolean,
@@ -20,12 +20,16 @@ import {
 import {
   MAX_BINDINGS,
   MAX_CODE_BYTES,
+  MAX_BUNDLED_BYTES,
   MAX_CRONS,
   MAX_DATA_MODULE_BYTES,
+  MAX_DATA_TOTAL_BYTES,
   MAX_METADATA_BYTES,
   MAX_MODULE_NAME_LENGTH,
   MAX_MODULES,
   MAX_QUEUE_CONSUMERS,
+  MAX_SOURCEMAP_BYTES,
+  MAX_TOTAL_BYTES,
 } from "./limits";
 
 export type { Json } from "./json";
@@ -67,6 +71,9 @@ export type WorkerBinding =
   | { type: "ratelimit"; name: string; namespace_id?: string; simple: { limit: number; period: number } }
   | { type: "assets"; name: string }
   | { type: "version_metadata"; name: string };
+
+/** What a client uploads: the fields of WorkerMetadata the emitter does not derive. */
+export type UploadMetadata = Omit<WorkerMetadata, "declared_compatibility_date" | "node">;
 
 export type WorkerBindingType = WorkerBinding["type"];
 
@@ -133,8 +140,13 @@ export type QueueConsumer = {
 
 export type WorkerMetadata = {
   main_module: string;
+  /** The date the build runs as: the declared date, raised to the floor when one was given. Runtime semantics only. */
   compatibility_date: string;
+  /** The date the upload declared. Node support and process.env population are decided from this one. */
+  declared_compatibility_date: string;
   compatibility_flags: string[];
+  /** What the flags and the declared date make of Node support (Cloudflare's own rules, see flags.ts). */
+  node: NodeFlags;
   bindings: WorkerBinding[];
   /** Binding types kept from the app's current version (only `secret_text` is meaningful here). */
   keep_bindings?: string[];
@@ -183,13 +195,31 @@ export type ValidateMetadataOptions = {
   now?: Date;
   /**
    * A date older than this builds as this date (plan 015: Cloudflare dates predate our semantics). Off by default so a
-   * legacy project keeps its own date; the API passes WORKERS_COMPAT_FLOOR.
+   * legacy project keeps its own date. Only the runtime generation moves: the flags are decided from the declared date.
+   * The Cloud path (`validateMetadataForCloud`) cannot leave it out.
    */
   compatibilityFloor?: string;
   /** The `bundle.main_module` of the request, when it carries one: it must match `metadata.main_module`. */
   bundleMainModule?: string;
   /** Refuse an `assets` binding or `run_worker_first` below this date (the bundle kind never bakes assets). */
   assetStoreMinDate?: string;
+};
+
+/**
+ * What a bundle uploaded to the Cloud is always checked with. Every field is required, so a caller cannot forget one:
+ * each of them left out used to fail open (an old assets date, a future date, a Cloudflare date below the floor).
+ */
+export type CloudValidation = {
+  /** Refuse a date in the future. */
+  now: Date;
+  /** The newest date the builder's generation knows. */
+  maxCompatibilityDate: string;
+  /** Cloudflare dates below this build as it. Pass WORKERS_COMPAT_FLOOR unless the generation says otherwise. */
+  compatibilityFloor: string;
+  /** An assets binding or run_worker_first below this date is refused. Pass ASSETS_STORE_MIN_DATE. */
+  assetStoreMinDate: string;
+  /** The `bundle.main_module` of the request, when it carries one. */
+  bundleMainModule?: string;
 };
 
 export type MetadataResult =
@@ -258,6 +288,45 @@ function stringField(
   return value;
 }
 
+/** The fields each binding type carries. The ones a binding is refused for are listed too: their own message applies. */
+const BINDING_FIELDS = {
+  plain_text: ["text"],
+  json: ["json"],
+  secret_text: ["text"],
+  kv_namespace: ["namespace_id"],
+  d1: ["id"],
+  r2_bucket: ["bucket_name", "jurisdiction"],
+  queue: ["queue_name"],
+  durable_object_namespace: ["class_name", "script_name"],
+  service: ["service", "environment", "entrypoint"],
+  analytics_engine: ["dataset"],
+  ratelimit: ["namespace_id", "simple"],
+  assets: [],
+  version_metadata: [],
+} satisfies Record<WorkerBindingType, readonly string[]>;
+
+/** A field this emitter does not read is refused, not dropped: a silently ignored field means different behaviour. */
+function refuseUnknownFields(c: Collector, raw: JsonObject, allowed: readonly string[], path: string): boolean {
+  const unknown = Object.keys(raw).filter((key) => key !== "type" && key !== "name" && !allowed.includes(key));
+  for (const key of unknown)
+    bad(c, "binding-invalid", `${path}.${key} is not a field this binding type takes here`, `${path}.${key}`);
+  return unknown.length > 0;
+}
+
+/** Whether a JSON value holds the key __proto__ anywhere: baked into the module as an object literal it would set a prototype. */
+function hasProtoKey(value: Input): boolean {
+  const pending: Input[] = [value];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (isArray(current)) pending.push(...current);
+    else if (isRecord(current)) {
+      if (Object.keys(current).includes("__proto__")) return true;
+      pending.push(...Object.values(current));
+    }
+  }
+  return false;
+}
+
 function validateBinding(c: Collector, raw: Input, index: number): WorkerBinding | undefined {
   const path = `metadata.bindings[${index}]`;
   if (!isRecord(raw)) {
@@ -293,6 +362,7 @@ function validateBinding(c: Collector, raw: Input, index: number): WorkerBinding
     );
     return undefined;
   }
+  if (refuseUnknownFields(c, raw, BINDING_FIELDS[type], path)) return undefined;
   switch (type) {
     case "plain_text": {
       if (!isString(raw.text)) {
@@ -304,6 +374,15 @@ function validateBinding(c: Collector, raw: Input, index: number): WorkerBinding
     case "json": {
       if (raw.json === undefined) {
         bad(c, "binding-invalid", `${path}.json is required`, `${path}.json`);
+        return undefined;
+      }
+      if (hasProtoKey(raw.json)) {
+        bad(
+          c,
+          "binding-invalid",
+          `${path}.json holds a "__proto__" key; baked into the module it would set a prototype instead of a property`,
+          `${path}.json`,
+        );
         return undefined;
       }
       return { type, name, json: raw.json };
@@ -477,6 +556,9 @@ function validateAssets(c: Collector, raw: Input): { config?: AssetsConfig } | u
     return {};
   }
   const config: AssetsConfig = {};
+  for (const key of Object.keys(rawConfig))
+    if (!ASSETS_CONFIG_KEYS.includes(key))
+      bad(c, "metadata-invalid", `${path}.${key} is not an assets setting this emitter takes`, `${path}.${key}`);
   const notFound = rawConfig.not_found_handling;
   if (notFound !== undefined) {
     if (notFound === "none" || notFound === "single-page-application" || notFound === "404-page")
@@ -520,11 +602,13 @@ function validateAssets(c: Collector, raw: Input): { config?: AssetsConfig } | u
   return { config };
 }
 
+const ASSETS_CONFIG_KEYS = ["not_found_handling", "run_worker_first", "html_handling", "_headers", "_redirects"];
+
 const CONSUMER_LIMITS = [
-  ["max_batch_size", 100],
-  ["max_batch_timeout", 60],
-  ["max_retries", 100],
-  ["retry_delay", 86400],
+  ["max_batch_size", 100, true],
+  ["max_batch_timeout", 60, false],
+  ["max_retries", 100, true],
+  ["retry_delay", 86400, false],
 ] as const;
 
 function validateConsumers(c: Collector, raw: Input): QueueConsumer[] | undefined {
@@ -548,11 +632,24 @@ function validateConsumers(c: Collector, raw: Input): QueueConsumer[] | undefine
       return;
     }
     const consumer: QueueConsumer = { queue: entry.queue };
-    for (const [key, max] of CONSUMER_LIMITS) {
+    for (const key of Object.keys(entry))
+      if (key !== "queue" && key !== "dead_letter_queue" && !CONSUMER_LIMITS.some(([known]) => known === key))
+        bad(
+          c,
+          "metadata-invalid",
+          `${path}.${key} is not a queue consumer setting this emitter takes`,
+          `${path}.${key}`,
+        );
+    for (const [key, max, whole] of CONSUMER_LIMITS) {
       const value = entry[key];
       if (value === undefined) continue;
-      if (!isNumber(value) || value < 0 || value > max)
-        bad(c, "metadata-invalid", `${path}.${key} must be a number from 0 to ${max}`, `${path}.${key}`);
+      if (!isNumber(value) || value < 0 || value > max || (whole && !Number.isInteger(value)))
+        bad(
+          c,
+          "metadata-invalid",
+          `${path}.${key} must be ${whole ? "a whole number" : "a number"} from 0 to ${max}`,
+          `${path}.${key}`,
+        );
       else consumer[key] = value;
     }
     const dead = entry.dead_letter_queue;
@@ -593,7 +690,9 @@ function validateCrons(c: Collector, raw: Input): string[] | undefined {
   return crons;
 }
 
-function validateDate(c: Collector, declared: Input, options: ValidateMetadataOptions): string | undefined {
+type Dates = { declared: string; effective: string };
+
+function validateDate(c: Collector, declared: Input, options: ValidateMetadataOptions): Dates | undefined {
   const path = "metadata.compatibility_date";
   if (!isString(declared) || !isCalendarDate(declared)) {
     bad(c, "compat-date-invalid", "metadata.compatibility_date is required, as YYYY-MM-DD", path);
@@ -612,9 +711,9 @@ function validateDate(c: Collector, declared: Input, options: ValidateMetadataOp
     c.warnings.push(
       `compatibility_date ${declared} is Cloudflare's date: the build uses ${options.compatibilityFloor}`,
     );
-    return options.compatibilityFloor;
+    return { declared, effective: options.compatibilityFloor };
   }
-  return declared;
+  return { declared, effective: declared };
 }
 
 function validateFlags(c: Collector, raw: Input): string[] {
@@ -729,8 +828,15 @@ export function validateMetadata(input: Input, options: ValidateMetadataOptions 
       "metadata.main_module",
     );
 
-  const date = validateDate(c, input.compatibility_date, options);
+  const dates = validateDate(c, input.compatibility_date, options);
+  const date = dates?.effective;
   const flags = validateFlags(c, input.compatibility_flags);
+  let node: NodeFlags | undefined;
+  if (dates !== undefined && c.errors.length === 0) {
+    const resolved = resolveNodeFlags(flags, dates.declared);
+    if (resolved.ok) node = resolved.value;
+    else bad(c, "flag-unsupported", resolved.message, "metadata.compatibility_flags");
+  }
   const bindings = validateBindings(c, input.bindings);
   const keepBindings = validateKeep(c, input.keep_bindings);
   if (input.keep_assets !== undefined && !isBoolean(input.keep_assets))
@@ -785,11 +891,14 @@ export function validateMetadata(input: Input, options: ValidateMetadataOptions 
       "metadata",
     );
 
-  if (c.errors.length > 0 || date === undefined || !isString(mainModule)) return { ok: false, errors: c.errors };
+  if (c.errors.length > 0 || dates === undefined || node === undefined || !isString(mainModule))
+    return { ok: false, errors: c.errors };
   const value: WorkerMetadata = {
     main_module: mainModule,
-    compatibility_date: date,
+    compatibility_date: dates.effective,
+    declared_compatibility_date: dates.declared,
     compatibility_flags: flags,
+    node,
     bindings,
   };
   if (keepBindings !== undefined) value.keep_bindings = keepBindings;
@@ -802,6 +911,16 @@ export function validateMetadata(input: Input, options: ValidateMetadataOptions 
   const message = isRecord(annotations) ? annotations["workers/message"] : undefined;
   if (isString(message)) value.message = message;
   return { ok: true, value, warnings: c.warnings };
+}
+
+/** `validateMetadata` with every safety check on, for an upload that reaches the Cloud. The options are required, not optional. */
+export function validateMetadataForCloud(input: Input, validation: CloudValidation): MetadataResult {
+  const missing = (field: string) =>
+    new TypeError(`validateMetadataForCloud needs ${field}: a Cloud upload is always checked against it`);
+  if (!(validation.now instanceof Date) || Number.isNaN(validation.now.getTime())) throw missing("now");
+  for (const field of ["maxCompatibilityDate", "compatibilityFloor", "assetStoreMinDate"] as const)
+    if (!isString(validation[field]) || !isCalendarDate(validation[field])) throw missing(field);
+  return validateMetadata(input, validation);
 }
 
 /** The values of every `secret_text` binding that carries one, by name. For the API edge, which seals them. */
@@ -822,6 +941,16 @@ export function stripSecretValues<T extends Pick<WorkerMetadata, "bindings">>(me
   };
 }
 
+/** Characters of `text` once it is a JSON string literal: a control character grows to 6, a quote or backslash to 2. */
+function jsonLiteralLength(text: string): number {
+  let length = 2;
+  for (let at = 0; at < text.length; at += 1) {
+    const code = text.charCodeAt(at);
+    length += code < 32 ? 6 : code === 34 || code === 92 ? 2 : 1;
+  }
+  return length;
+}
+
 /** One module of a bundle: contents (the emit unit) or a digest (the API, before queueing). Type and name are unchecked input. */
 export type ModuleCandidate = { name: Input; type: Input; content?: string | Uint8Array; sha256?: Input };
 
@@ -838,6 +967,11 @@ export function validateModules(
     errors.push(issue("limit-exceeded", `${modules.length} modules; at most ${MAX_MODULES}`, "modules"));
   const names = new Set<string>();
   let codeBytes = 0;
+  let dataBytes = 0;
+  let sourcemapBytes = 0;
+  let totalBytes = 0;
+  /** What the bundler is handed: code as written, text and data as the string literals they become. */
+  let bundledBytes = 0;
   const encoder = new TextEncoder();
   modules.forEach((module, at) => {
     const path = `modules[${at}]`;
@@ -871,7 +1005,13 @@ export function validateModules(
     const content = module.content;
     if (content === undefined) return;
     const bytes = content instanceof Uint8Array ? content.byteLength : encoder.encode(content).byteLength;
+    totalBytes += bytes;
     if (type === "data") {
+      dataBytes += bytes;
+      if (dataBytes <= MAX_DATA_TOTAL_BYTES)
+        for (const byte of content instanceof Uint8Array ? content : encoder.encode(content))
+          bundledBytes += byte < 32 ? 6 : byte === 34 || byte === 92 || byte > 127 ? 2 : 1;
+      else bundledBytes += bytes;
       if (bytes > MAX_DATA_MODULE_BYTES)
         errors.push(
           issue(
@@ -880,8 +1020,43 @@ export function validateModules(
             `${path}.content`,
           ),
         );
-    } else if (type === "esm" || type === "cjs" || type === "text") codeBytes += bytes;
+    } else if (type === "sourcemap") sourcemapBytes += bytes;
+    else if (type === "esm" || type === "cjs") {
+      codeBytes += bytes;
+      bundledBytes += bytes;
+    } else if (type === "text") {
+      codeBytes += bytes;
+      bundledBytes += content instanceof Uint8Array ? bytes : jsonLiteralLength(content);
+    }
   });
+  if (dataBytes > MAX_DATA_TOTAL_BYTES)
+    errors.push(
+      issue(
+        "limit-exceeded",
+        `the data modules total ${dataBytes} bytes; at most ${MAX_DATA_TOTAL_BYTES} (the module static-data region)`,
+        "modules",
+      ),
+    );
+  if (sourcemapBytes > MAX_SOURCEMAP_BYTES)
+    errors.push(
+      issue(
+        "limit-exceeded",
+        `the sourcemap modules total ${sourcemapBytes} bytes; at most ${MAX_SOURCEMAP_BYTES}`,
+        "modules",
+      ),
+    );
+  if (totalBytes > MAX_TOTAL_BYTES)
+    errors.push(
+      issue("limit-exceeded", `the modules total ${totalBytes} bytes; at most ${MAX_TOTAL_BYTES}`, "modules"),
+    );
+  if (bundledBytes > MAX_BUNDLED_BYTES && codeBytes <= MAX_CODE_BYTES)
+    errors.push(
+      issue(
+        "limit-exceeded",
+        `the modules grow to ${bundledBytes} bytes once text and data modules become string literals; at most ${MAX_BUNDLED_BYTES}`,
+        "modules",
+      ),
+    );
   if (codeBytes > MAX_CODE_BYTES)
     errors.push(
       issue("limit-exceeded", `the code modules total ${codeBytes} bytes; at most ${MAX_CODE_BYTES}`, "modules"),

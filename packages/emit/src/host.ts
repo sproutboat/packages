@@ -1,4 +1,4 @@
-/** What a host that compiles locally adds around `emitFromBundle`: the prelude, and files baked into the module. */
+/** What a host that compiles locally adds around `emitLocal`: the prelude, and files baked into the module. */
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { readAssetRules, walkAssets, type AssetManifest } from "@sproutboat/assets";

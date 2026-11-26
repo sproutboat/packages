@@ -9,7 +9,7 @@ import {
   type QueueRef,
   type SproutboatConfig,
 } from "@sproutboat/config";
-import type { AssetsConfig, QueueConsumer, WorkerBinding, WorkerMetadata } from "./metadata";
+import type { AssetsConfig, QueueConsumer, UploadMetadata, WorkerBinding } from "./metadata";
 
 export type FromConfigOptions = {
   /** The name of the bundle's entry module. */
@@ -20,7 +20,7 @@ export type FromConfigOptions = {
 const isQueueBinding = (entry: QueueRef): entry is QueueBinding => Object(entry) === entry;
 
 /** Secret names are declared without values: the values travel apart, sealed. */
-export function fromConfig(config: SproutboatConfig, options: FromConfigOptions = {}): WorkerMetadata {
+export function fromConfig(config: SproutboatConfig, options: FromConfigOptions = {}): UploadMetadata {
   const bindings: WorkerBinding[] = [];
   for (const [name, text] of Object.entries(config.vars ?? {})) bindings.push({ type: "plain_text", name, text });
   for (const ref of resourceRefs(config.kv_namespaces))
@@ -73,7 +73,7 @@ export function fromConfig(config: SproutboatConfig, options: FromConfigOptions 
   for (const name of config.secrets ?? []) bindings.push({ type: "secret_text", name });
   if (config.version_metadata) bindings.push({ type: "version_metadata", name: config.version_metadata });
 
-  const metadata: WorkerMetadata = {
+  const metadata: UploadMetadata = {
     main_module: options.mainModule ?? "index.js",
     compatibility_date: config.compatibility_date,
     compatibility_flags: [...(options.flags ?? [])],

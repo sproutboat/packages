@@ -2,7 +2,20 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
-import { emitFromBundle, WORKERS_COMPAT_FLOOR, type JsonObject, type ModuleInput } from "../src/index";
+import {
+  ASSETS_STORE_MIN_DATE,
+  emitForCloud,
+  WORKERS_COMPAT_FLOOR,
+  type JsonObject,
+  type ModuleInput,
+} from "../src/index";
+
+const validation = {
+  now: new Date("2026-11-26"),
+  maxCompatibilityDate: "2026-11-26",
+  compatibilityFloor: WORKERS_COMPAT_FLOOR,
+  assetStoreMinDate: ASSETS_STORE_MIN_DATE,
+};
 
 const dir = join(import.meta.dir, "fixtures/alchemy-v2");
 const metadata: JsonObject = JSON.parse(readFileSync(join(dir, "metadata.json"), "utf8"));
@@ -17,10 +30,7 @@ const modules: ModuleInput[] = [
 
 describe("an Alchemy v2 Cloudflare bundle", () => {
   test("emits with Cloudflare-shaped metadata: a DO binding and a new_sqlite_classes migration", async () => {
-    const result = await emitFromBundle(
-      { modules, metadata },
-      { name: "alchemy-demo", validation: { compatibilityFloor: WORKERS_COMPAT_FLOOR, now: new Date("2026-11-26") } },
-    );
+    const result = await emitForCloud({ modules, metadata }, { name: "alchemy-demo", validation });
     expect(result.metadata.compatibility_date).toBe(WORKERS_COMPAT_FLOOR);
     expect(result.metadata.migrations).toEqual({
       new_tag: "alchemy-demo-v1",
@@ -49,7 +59,7 @@ describe("an Alchemy v2 Cloudflare bundle", () => {
 
   test("the same bundle is refused by name when a piece of the upload is wrong", async () => {
     const wrong = async (patch: JsonObject, reason: string) => {
-      const refused = emitFromBundle({ modules, metadata: { ...metadata, ...patch } }, { name: "x" });
+      const refused = emitForCloud({ modules, metadata: { ...metadata, ...patch } }, { name: "x", validation });
       await expect(refused).rejects.toThrow(reason);
     };
     await wrong({ compatibility_flags: ["new_module_registry", "legacy_module_registry"] }, "legacy_module_registry");

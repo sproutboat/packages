@@ -1,5 +1,5 @@
 /**
- * The proof of one code path: for each project the CLI emitted, `emitFromBundle(fromConfig(config), the CLI's bundle)` writes the
+ * The proof of one code path: for each project the CLI emitted, `emitLocal(fromConfig(config), the CLI's bundle)` writes the
  * same bytes. Fixtures come from capture-cli-fixtures.ts.
  */
 import { createHash } from "node:crypto";
@@ -8,7 +8,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, test } from "bun:test";
 import type { SproutboatConfig } from "@sproutboat/config";
 import { canonical } from "./canonical";
-import { bakeAssets, deriveBindings, emitFromBundle, fromConfig, loadPrelude, type EmitOptions } from "../src/index";
+import { bakeAssets, deriveBindings, emitLocal, fromConfig, loadPrelude, type EmitOptions } from "../src/index";
 
 type Mode = "broker" | "standalone" | "cloud";
 const asMode = (name: string): Mode => {
@@ -26,6 +26,10 @@ type ModeRecord = {
 const root = resolve(import.meta.dir, "fixtures/cli");
 const names = readdirSync(root).sort();
 const sha = (text: string) => createHash("sha256").update(text).digest("hex");
+
+const allowStale = process.env.SB_EMIT_ALLOW_STALE_FIXTURES === "1" && process.env.CI === undefined;
+const staleMessage = (name: string, mode: string) =>
+  `fixtures stale: the prelude changed since ${name} (${mode}) was captured. Run \`bun packages/emit/test/capture-cli-fixtures.ts <cli-dir>\` with a CLI checkout that has the new runtime, review the diff, and commit it. While you work, SB_EMIT_ALLOW_STALE_FIXTURES=1 skips these tests locally (never in CI).`;
 
 const VERSION_LINE = /env\["([^"]+)"\] = \{"id":"([^"]+)","tag":"([^"]+)","timestamp":"([^"]+)"\};/;
 
@@ -65,7 +69,7 @@ describe("the CLI's emit, reproduced from its bundle and config", () => {
       const golden = readFileSync(join(dir, `region.${mode}.js`), "utf8");
 
       test(`${name} (${mode}): the region is byte-identical`, async () => {
-        const result = await emitFromBundle(
+        const result = await emitLocal(
           { modules, metadata: fromConfig(config) },
           optionsFor(dir, config, mode, record, golden),
         );
@@ -74,13 +78,15 @@ describe("the CLI's emit, reproduced from its bundle and config", () => {
         expect(result.source).toBe(result.region);
       });
 
-      test(`${name} (${mode}): with the prelude the whole file is byte-identical`, async () => {
-        const transport = mode === "broker" ? "broker" : "embedded";
+      const transport = mode === "broker" ? "broker" : "embedded";
+      const stale = sha(loadPrelude(transport)) !== record.preludeSha256;
+      // Only a developer who is mid-change may skip a stale fixture, and the skip shows in the run. CI always fails.
+      const run = stale && allowStale ? test.skip : test;
+      run(`${name} (${mode}): with the prelude the whole file is byte-identical`, async () => {
         const prelude = loadPrelude(transport);
-        // The recorded file was written with the prelude of that day; a runtime change makes this a recapture, not a failure.
-        if (sha(prelude) !== record.preludeSha256) return;
+        if (stale) throw new Error(staleMessage(name, mode));
         const options = { ...optionsFor(dir, config, mode, record, golden), prelude };
-        const result = await emitFromBundle({ modules, metadata: fromConfig(config) }, options);
+        const result = await emitLocal({ modules, metadata: fromConfig(config) }, options);
         expect(result.source.length).toBe(record.bytes);
         expect(sha(canonical(result.source))).toBe(record.canonicalSha256);
         // On the machine the CLI ran on, the plain bytes match as well.

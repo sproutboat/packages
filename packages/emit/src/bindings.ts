@@ -2,6 +2,7 @@
  * Cloudflare binding metadata to the two shapes Sproutboat needs: the `Bindings` object baked into the module for the
  * runtime, and the entries of the app record (`spec.bindings`) that the API stores. One mapping, so they cannot disagree.
  */
+import { isBindingName } from "@sproutboat/config";
 import type { Bindings, QueueSettings } from "@sproutboat/runtime";
 import { EmitError, issue } from "./errors";
 import type { Json, WorkerMetadata } from "./metadata";
@@ -204,7 +205,19 @@ export function deriveBindings(metadata: WorkerMetadata, options: DeriveOptions 
     }
   }
 
-  for (const name of options.extraSecretNames ?? []) if (!runtime.secrets.includes(name)) runtime.secrets.push(name);
+  const taken = new Map(metadata.bindings.map((binding) => [binding.name, binding.type]));
+  for (const name of options.extraSecretNames ?? []) {
+    if (!isBindingName(name))
+      throw new EmitError([
+        issue("binding-invalid", `stored secret name ${JSON.stringify(name)} is not a binding name`),
+      ]);
+    const other = taken.get(name);
+    if (other !== undefined && other !== "secret_text")
+      throw new EmitError([
+        issue("binding-invalid", `stored secret "${name}" has the name of this upload's ${other} binding`),
+      ]);
+    if (!runtime.secrets.includes(name)) runtime.secrets.push(name);
+  }
 
   // Each queue binding names its queue and takes the settings of the consumer that names that queue.
   const consumers = new Map(

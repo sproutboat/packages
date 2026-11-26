@@ -4,6 +4,7 @@ export * from "./flags";
 export * from "./metadata";
 export * from "./bindings";
 export * from "./virtual-bundle";
+export { checkCodeModule } from "./source-check";
 export * from "./capability";
 export * from "./emit";
 export * from "./from-config";

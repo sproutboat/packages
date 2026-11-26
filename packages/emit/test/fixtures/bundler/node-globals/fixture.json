@@ -1,0 +1,7 @@
+{
+  "compatibility_date": "2026-11-23",
+  "compatibility_flags": [],
+  "bindings": [{ "type": "plain_text", "name": "MODE", "text": "bundled" }],
+  "env": { "MODE": "bundled" },
+  "requests": ["/buffer", "/path", "/events", "/free", "/nope"]
+}

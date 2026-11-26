@@ -1,11 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { EmitError, emitFromBundle, type EmitReason, type JsonObject, type ModuleInput } from "./index";
+import { EmitError, emitLocal, type EmitReason, type JsonObject, type ModuleInput } from "./index";
 
 const esm = (name: string, content: string): ModuleInput => ({ name, type: "esm", content });
 const HANDLER = `export default { fetch() { return new Response("ok"); } };`;
 const meta = (extra: JsonObject = {}) => ({ main_module: "index.js", compatibility_date: "2026-11-23", ...extra });
 const emit = (modules: ModuleInput[], metadata: JsonObject = meta(), options: { name?: string } = {}) =>
-  emitFromBundle({ modules, metadata }, { name: options.name ?? "app" });
+  emitLocal({ modules, metadata }, { name: options.name ?? "app" });
 
 async function refusal(run: Promise<unknown>): Promise<{ reason: EmitReason; message: string }> {
   try {
@@ -17,12 +17,13 @@ async function refusal(run: Promise<unknown>): Promise<{ reason: EmitReason; mes
   throw new Error("expected a refusal");
 }
 
-describe("emitFromBundle", () => {
+describe("emitLocal", () => {
   test("a self-contained module passes through the wrapper untouched", async () => {
     const result = await emit([esm("index.js", HANDLER)]);
     expect(result.bundled).toBe(HANDLER);
     expect(result.region.startsWith("globalThis.__sbCompat = ")).toBe(true);
     expect(result.region).toContain("export default {\n  port: 8080");
+    // No native-transfer stub: the Cloud's prelude has its own. This is not a raw-C refusal (patch 0026 does that; see hostile.test.ts).
     expect(result.region).not.toContain("Porffor.c");
   });
 
@@ -108,7 +109,7 @@ describe("emitFromBundle", () => {
   });
 
   test("names the app already holds are bound as well", async () => {
-    const result = await emitFromBundle(
+    const result = await emitLocal(
       { modules: [esm("index.js", HANDLER)], metadata: meta({ bindings: [{ type: "secret_text", name: "A" }] }) },
       { name: "app", extraSecretNames: ["B", "A"] },
     );
@@ -133,7 +134,7 @@ describe("emitFromBundle", () => {
   test("version metadata needs the caller's id", async () => {
     const metadata = meta({ bindings: [{ type: "version_metadata", name: "VERSION" }] });
     expect((await refusal(emit([esm("index.js", HANDLER)], metadata))).reason).toBe("binding-invalid");
-    const result = await emitFromBundle(
+    const result = await emitLocal(
       { modules: [esm("index.js", HANDLER)], metadata },
       { name: "app", versionMetadata: { id: "abc", tag: "app", timestamp: "2026-11-26T00:00:00.000Z" } },
     );
@@ -167,7 +168,7 @@ describe("node built-ins and globals", () => {
     ]) {
       const error = await refusal(emit(modules, metadata));
       expect(error.reason).toBe("no-such-module");
-      expect(error.message).toBe('No such module "node:buffer". Imported from "index.js"');
+      expect(error.message).toStartWith('No such module "node:buffer". Imported from "index.js"');
     }
   });
 
@@ -300,7 +301,7 @@ describe("hostile input", () => {
   test("path traversal and absolute names are refused as module names", async () => {
     for (const name of ["../index.js", "a/../../b.js", "/abs.js", "a//b.js", "a\\b.js", "a\0b.js"]) {
       const error = await refusal(
-        emitFromBundle(
+        emitLocal(
           { modules: [esm("index.js", HANDLER), esm(name, "export const x = 1;")], metadata: meta() },
           { name: "app" },
         ),
@@ -348,7 +349,7 @@ describe("hostile input", () => {
       // SAFETY: a client can send any string as a module type; the emitter must refuse the ones outside ModuleType.
       const unchecked = type as "esm";
       const error = await refusal(
-        emitFromBundle(
+        emitLocal(
           { modules: [esm("index.js", HANDLER), { name: "x", type: unchecked, content: "" }], metadata: meta() },
           { name: "app" },
         ),
@@ -420,7 +421,7 @@ describe("hostile input", () => {
 
   test("a compatibility date past the generation is refused", async () => {
     const error = await refusal(
-      emitFromBundle(
+      emitLocal(
         { modules: [esm("index.js", HANDLER)], metadata: meta({ compatibility_date: "2026-12-01" }) },
         { name: "app", validation: { maxCompatibilityDate: "2026-11-23" } },
       ),

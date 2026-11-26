@@ -18,7 +18,7 @@ const NODE_GLOBAL_USE = /\b(process|Bun|Deno|Buffer)\.[a-zA-Z_$]|\bnew\s+Buffer\
  * it up behind `globalThis.process?.getBuiltinModule?.(...)` and a doc link or log message can carry any prefix. A dynamic `import("node:sqlite")` is judged by
  * `dynamicImports` (allowed where a failure is caught).
  */
-const NODE_SPECIFIER_AT = /(?<![.$\w])(?:from|import|require)\s*\(?\s*(['"`])/g;
+const NODE_SPECIFIER_AT = /(?<![.$\w])(?:from|import|require)\s*(?:\(\s*)?(['"`])/g;
 
 /** Message of the node specifier and node global rules (one text, so a source hitting both reports it twice, as it always did). */
 const NODE_MESSAGE = "Node, Bun, and Deno APIs are not supported";
@@ -43,7 +43,7 @@ function nodeSpecifierUsed(code: Code): boolean {
 
 const alwaysForbidden: Rule[] = [
   {
-    test: ({ masked }) => /^\s*import\s/m.test(masked),
+    test: ({ masked }) => /^[^\S\n]*import\s/m.test(masked),
     message: "an import survived bundling — only static imports can be resolved at build time",
   },
   {

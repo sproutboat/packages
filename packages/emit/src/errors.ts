@@ -13,6 +13,8 @@ export const EMIT_REASONS = [
   "limit-exceeded",
   "no-such-module",
   "import-attribute-refused",
+  "syntax-error",
+  "source-unverifiable",
   "assets-date-unsupported",
   "capability-check",
   "handler-missing",

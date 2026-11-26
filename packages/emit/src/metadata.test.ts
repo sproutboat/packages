@@ -47,7 +47,13 @@ describe("schema file", () => {
 describe("validateMetadata", () => {
   test("accepts the smallest upload", () => {
     const result = ok(base);
-    expect(result.value).toEqual({ ...base, compatibility_flags: [], bindings: [] });
+    expect(result.value).toEqual({
+      ...base,
+      declared_compatibility_date: base.compatibility_date,
+      compatibility_flags: [],
+      node: { compat: true, als: false, populateProcessEnv: true },
+      bindings: [],
+    });
     expect(result.warnings).toEqual([]);
   });
 
