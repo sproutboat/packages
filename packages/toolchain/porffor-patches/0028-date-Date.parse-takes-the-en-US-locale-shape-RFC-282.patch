@@ -1,0 +1,237 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sproutboat <noreply@sproutboat.com>
+Date: Thu, 26 Nov 2026 01:50:10 +0100
+Subject: [PATCH] date: Date.parse takes the en-US locale shape, RFC 2822 and
+ toString shapes with offsets (P16)
+
+`new Date(d.toLocaleString("en-US", { timeZone }))` is the usual way to read a wall clock in another zone, and it was NaN:
+the string is "11/25/2026, 6:22:39 PM", which the ISO parser reads as garbage. `Date.parse` now falls back to a
+tolerant parser for what neither parser takes: M/D/YYYY and YYYY/M/D with h:mm[:ss[.sss]] and AM or PM, `YYYY-MM-DD hh:mm`,
+`Month D, YYYY`, `D Month YYYY`, with an optional weekday, a zone name in parentheses and a +hhmm, +hh:mm or +hh offset.
+A string with no offset is UTC. The weekday-led RFC 7231 and toString parser read an offset such as `GMT+0100` and dropped it
+(`Sun May 12 2024 02:44:13 GMT+0100` came out an hour late), so the tolerant parser now runs first on that path and the old
+one stays as its fallback. ISO strings are unchanged.
+
+Class: upstream
+Pass: patchDateLoose (P16)
+Upstream: not filed
+---
+ compiler/builtins/date.ts | 195 +++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 194 insertions(+), 1 deletion(-)
+
+diff --git a/compiler/builtins/date.ts b/compiler/builtins/date.ts
+index 445b3a813dc4138b37bac339ea837f08c0a4eec3..527912a1d7a2ceaaac7c1094374a3f914a1fbb61 100644
+--- a/compiler/builtins/date.ts
++++ b/compiler/builtins/date.ts
+@@ -627,6 +627,191 @@ export const __ecma262_ParseRFC7231OrToString = (string: bytestring): number =>
+   ));
+ };
+ 
++// number of decimal digits at ptr
++export const __Porffor_date_run = (ptr: i32, endPtr: i32): number => {
++  let n: number = 0;
++  while (ptr + n < endPtr) {
++    const chr: i32 = Porffor.IR.loadU8(ptr + n, 4);
++    if (Porffor.fastOr(chr < 48, chr > 57)) break;
++    n++;
++  }
++  return n;
++};
++
++// month index from the first three letters, any case; -1 when they are not a month name (weekdays and zone names are not)
++export const __Porffor_date_month = (ptr: i32): number => {
++  const a: i32 = Porffor.IR.loadU8(ptr, 4) | 32;
++  const b: i32 = Porffor.IR.loadU8(ptr, 5) | 32;
++  const c: i32 = Porffor.IR.loadU8(ptr, 6) | 32;
++  if (Porffor.fastAnd(a == 106, b == 97, c == 110)) return 0; // jan
++  if (Porffor.fastAnd(a == 102, b == 101, c == 98)) return 1; // feb
++  if (Porffor.fastAnd(a == 109, b == 97, c == 114)) return 2; // mar
++  if (Porffor.fastAnd(a == 97, b == 112, c == 114)) return 3; // apr
++  if (Porffor.fastAnd(a == 109, b == 97, c == 121)) return 4; // may
++  if (Porffor.fastAnd(a == 106, b == 117, c == 110)) return 5; // jun
++  if (Porffor.fastAnd(a == 106, b == 117, c == 108)) return 6; // jul
++  if (Porffor.fastAnd(a == 97, b == 117, c == 103)) return 7; // aug
++  if (Porffor.fastAnd(a == 115, b == 101, c == 112)) return 8; // sep
++  if (Porffor.fastAnd(a == 111, b == 99, c == 116)) return 9; // oct
++  if (Porffor.fastAnd(a == 110, b == 111, c == 118)) return 10; // nov
++  if (Porffor.fastAnd(a == 100, b == 101, c == 99)) return 11; // dec
++  return -1;
++};
++
++// What the two parsers above do not take, in the shapes real programs hand to `new Date(...)`:
++// the en-US toLocaleString shape (M/D/YYYY, h:mm:ss AM|PM), `YYYY-MM-DD hh:mm`, `Month D, YYYY`, `D Month YYYY`, RFC 2822 without a weekday,
++// each with an optional weekday, a zone name and a +hhmm or +hh:mm offset. No offset means UTC, which is local time here.
++export const __Porffor_date_parseLoose = (string: bytestring): number => {
++  const endPtr: i32 = Porffor.IR.ptr(string) + string.length;
++  let ptr: i32 = Porffor.IR.ptr(string);
++
++  let y: number = -1;
++  let m: number = -1;
++  let dt: number = -1;
++  let h: number = 0;
++  let min: number = 0;
++  let s: number = 0;
++  let milli: number = 0;
++  let meridiem: number = 0; // 1 am, 2 pm
++  let haveTime: boolean = false;
++  let haveOffset: boolean = false;
++  let offset: number = 0;
++
++  while (ptr < endPtr) {
++    const chr: i32 = Porffor.IR.loadU8(ptr, 4);
++    if (Porffor.fastAnd(chr >= 48, chr <= 57)) { // 0-9
++      let cnt: number = __Porffor_date_run(ptr, endPtr);
++      let n: number = __Porffor_date_digits(ptr, cnt, endPtr);
++      ptr += cnt;
++      const next: i32 = ptr < endPtr ? Porffor.IR.loadU8(ptr, 4) : 0;
++      if (Porffor.fastAnd(next == 58, haveTime == false)) { // h:mm[:ss[.sss]]
++        h = n;
++        haveTime = true;
++        ptr++;
++        cnt = __Porffor_date_run(ptr, endPtr);
++        if (cnt == 0) return NaN;
++        min = __Porffor_date_digits(ptr, cnt, endPtr);
++        ptr += cnt;
++        if (Porffor.fastAnd(ptr < endPtr, Porffor.IR.loadU8(ptr, 4) == 58)) {
++          ptr++;
++          cnt = __Porffor_date_run(ptr, endPtr);
++          if (cnt == 0) return NaN;
++          s = __Porffor_date_digits(ptr, cnt, endPtr);
++          ptr += cnt;
++          if (Porffor.fastAnd(ptr < endPtr, Porffor.IR.loadU8(ptr, 4) == 46)) {
++            ptr++;
++            cnt = __Porffor_date_run(ptr, endPtr);
++            if (cnt == 0) return NaN;
++            if (cnt > 3) milli = __Porffor_date_digits(ptr, 3, endPtr);
++              else if (cnt == 3) milli = __Porffor_date_digits(ptr, 3, endPtr);
++              else if (cnt == 2) milli = __Porffor_date_digits(ptr, 2, endPtr) * 10;
++              else milli = __Porffor_date_digits(ptr, 1, endPtr) * 100;
++            ptr += cnt;
++          }
++        }
++      } else if (Porffor.fastAnd(next == 47, m == -1, dt == -1)) { // M/D/YYYY or YYYY/M/D
++        const first: number = n;
++        ptr++;
++        cnt = __Porffor_date_run(ptr, endPtr);
++        if (cnt == 0) return NaN;
++        n = __Porffor_date_digits(ptr, cnt, endPtr);
++        ptr += cnt;
++        if (cnt > 0) {
++          if (first > 31) { y = first; m = n - 1; } else { m = first - 1; dt = n; }
++        }
++        if (Porffor.fastAnd(ptr < endPtr, Porffor.IR.loadU8(ptr, 4) == 47)) {
++          ptr++;
++          cnt = __Porffor_date_run(ptr, endPtr);
++          if (cnt == 0) return NaN;
++          n = __Porffor_date_digits(ptr, cnt, endPtr);
++          ptr += cnt;
++          if (first > 31) dt = n;
++            else if (cnt <= 2) y = n < 50 ? 2000 + n : 1900 + n;
++            else y = n;
++        }
++      } else if (Porffor.fastAnd(next == 45, cnt > 2, m == -1, dt == -1)) { // YYYY-MM-DD with something after it
++        y = n;
++        ptr++;
++        cnt = __Porffor_date_run(ptr, endPtr);
++        if (cnt == 0) return NaN;
++        m = __Porffor_date_digits(ptr, cnt, endPtr) - 1;
++        ptr += cnt;
++        if (Porffor.fastAnd(ptr < endPtr, Porffor.IR.loadU8(ptr, 4) == 45)) {
++          ptr++;
++          cnt = __Porffor_date_run(ptr, endPtr);
++          if (cnt == 0) return NaN;
++          dt = __Porffor_date_digits(ptr, cnt, endPtr);
++          ptr += cnt;
++        }
++      } else if (Porffor.fastOr(cnt > 2, Porffor.fastAnd(dt != -1, y == -1))) {
++        y = cnt <= 2 ? (n < 50 ? 2000 + n : 1900 + n) : n; // a year, or a two digit one after the day
++      } else if (dt == -1) {
++        dt = n;
++      } else if (y == -1) {
++        y = n < 50 ? 2000 + n : 1900 + n;
++      } else return NaN;
++      continue;
++    }
++
++    if (Porffor.fastOr(Porffor.fastAnd(chr >= 65, chr <= 90), Porffor.fastAnd(chr >= 97, chr <= 122))) { // a-z A-Z
++      let cnt: i32 = 0;
++      while (ptr + cnt < endPtr) {
++        const c: i32 = Porffor.IR.loadU8(ptr + cnt, 4) | 32;
++        if (Porffor.fastOr(c < 97, c > 122)) break;
++        cnt++;
++      }
++      if (cnt == 2) {
++        const b: i32 = Porffor.IR.loadU8(ptr, 5) | 32;
++        const a: i32 = chr | 32;
++        if (b == 109) {
++          if (a == 97) meridiem = 1;
++          if (a == 112) meridiem = 2;
++        }
++      } else if (cnt >= 3) {
++        const found: number = __Porffor_date_month(ptr);
++        if (Porffor.fastAnd(found >= 0, m == -1)) m = found;
++      }
++      ptr += cnt;
++      continue;
++    }
++
++    if (chr == 40) { // ( zone name )
++      while (Porffor.fastAnd(ptr < endPtr, Porffor.IR.loadU8(ptr, 4) != 41)) ptr++;
++      ptr++;
++      continue;
++    }
++
++    if (Porffor.fastAnd(Porffor.fastOr(chr == 43, chr == 45), haveTime, ptr + 1 < endPtr)) { // +hhmm, +hh:mm, +hh after a time
++      const cnt: number = __Porffor_date_run(ptr + 1, endPtr);
++      if (Porffor.fastOr(cnt == 4, cnt == 2)) {
++        const sign: number = chr == 45 ? -1 : 1;
++        let minutes: number = __Porffor_date_digits(ptr + 1, 2, endPtr) * 60;
++        ptr += 1 + cnt;
++        if (cnt == 4) minutes += __Porffor_date_digits(ptr - 2, 2, endPtr);
++          else if (Porffor.fastAnd(ptr + 2 < endPtr, Porffor.IR.loadU8(ptr, 4) == 58)) {
++            minutes += __Porffor_date_digits(ptr + 1, 2, endPtr);
++            ptr += 3;
++          }
++        if (Porffor.fastOr(minutes > 23 * 60 + 59, minutes % 60 > 59)) return NaN;
++        offset = sign * minutes;
++        haveOffset = true;
++        continue;
++      }
++    }
++
++    ptr++; // commas, spaces, dots, anything else
++  }
++
++  if (Porffor.fastOr(y < 0, m < 0, m > 11, dt < 1, dt > 31)) return NaN;
++  if (meridiem == 2) { if (h < 12) h += 12; }
++    else if (Porffor.fastAnd(meridiem == 1, h == 12)) h = 0;
++  if (Porffor.fastOr(h > 24, min > 59, s > 59)) return NaN;
++
++  let t: number = __ecma262_MakeDate(__ecma262_MakeDay(y, m, dt), __ecma262_MakeTime(h, min, s, milli));
++  if (haveOffset) return __ecma262_TimeClip(t - offset * 60000);
++  return __ecma262_TimeClip(__ecma262_UTC(t));
++};
++
+ // 21.4.3.2 Date.parse (string)
+ // https://tc39.es/ecma262/multipage/numbers-and-dates.html#sec-date.parse
+ export const __Date_parse = (string: bytestring): number => {
+@@ -641,10 +826,18 @@ export const __Date_parse = (string: bytestring): number => {
+   // if first char is numerical or a year sign, use DTSF parser
+   const chr: i32 = Porffor.IR.loadU8(string, 4);
+   if (Porffor.fastOr(Porffor.fastAnd(chr >= 48, chr <= 57), chr == 43, chr == 45)) { // 0-9 + -
+-    return __ecma262_ParseDTSF(string);
++    const iso: number = __ecma262_ParseDTSF(string);
++    if (iso == iso) return iso;
++    // a year first and a dash after it is the ISO family: its NaN for a bad offset or a stray digit is deliberate
++    if (Porffor.fastAnd(string.length > 4, Porffor.IR.loadU8(string, 8) == 45)) return NaN;
++    if (Porffor.fastOr(chr == 43, chr == 45)) return NaN;
++    return __Porffor_date_parseLoose(string);
+   }
+ 
+   // else, use RFC 7231 or Date.prototype.toString() parser
++  // the loose parser first: it applies a +hhmm offset, which this one reads and drops
++  const loose: number = __Porffor_date_parseLoose(string);
++  if (loose == loose) return loose;
+   return __ecma262_ParseRFC7231OrToString(string);
+ };
+ 

@@ -3599,14 +3599,20 @@ function __sbFormDataFromBody(headers, text) {
   return __sbParseUrlencodedFormData(text);
 }
 
+// From compatibility date 2026-10-27 text() returns a Promise; before it, a string.
+function __sbFormDataOf(body) {
+  const headers = body.headers;
+  const text = body.text();
+  return __sbIsFn(text.then) ? text.then((t) => __sbFormDataFromBody(headers, t)) : __sbFormDataFromBody(headers, text);
+}
 if (!("formData" in Request.prototype)) {
   Request.prototype.formData = function () {
-    return __sbFormDataFromBody(this.headers, this.text());
+    return __sbFormDataOf(this);
   };
 }
 if (!("formData" in Response.prototype)) {
   Response.prototype.formData = function () {
-    return __sbFormDataFromBody(this.headers, this.text());
+    return __sbFormDataOf(this);
   };
 }
 // #60 — the newer Uint8Array shorthand, trivial on top of arrayBuffer().
@@ -5429,6 +5435,13 @@ if (globalThis.crypto.scryptVerify == null) {
     return dk.length === want.length && __sbEqCt(dk, want);
   };
 }
+// node:crypto scrypt for bundles: the CLI's node:crypto shim calls this. password and salt are BufferSources (a string is UTF-8), the result an ArrayBuffer.
+// The same native code as crypto.scryptVerify (N * r up to 2^20, a key of up to 1,024 bytes); the V array is 128 * N * r bytes of the worker's memory.
+globalThis.__sbScrypt = function (password, salt, N, r, p, keylen) {
+  const dk = __sbScryptRaw(__sbToBytes(password), __sbToBytes(salt), String(N), String(r), String(p), String(keylen));
+  if (dk === "") throw new RangeError("Invalid scrypt params: memory limit exceeded");
+  return __sbBufFrom(dk);
+};
 
 // ---------------------------------------------------------------------------
 // Bindings: env.<KV>, env.<SECRET>, env.<D1>, env.<R2>, and globalThis.fetch,
@@ -10449,6 +10462,8 @@ function __sbD1Param(value, strict) {
     for (let i = 0; i < bytes.length; i++) hex += (bytes[i] < 16 ? "0" : "") + bytes[i].toString(16);
     return { $blob: hex };
   }
+  // D1 serialises a Date as JSON does: its ISO string, null when invalid. Strict calls refused it before.
+  if (value instanceof Date) return value.getTime() === value.getTime() ? value.toISOString() : null;
   if (!strict || value === null || value === true || value === false || Object(value) instanceof Number || __sbIsStr(value)) return value;
   // oxlint-disable-next-line anti-slop/no-runtime-typeof -- workerd's D1_TYPE_ERROR names the value's typeof
   throw new Error("D1_TYPE_ERROR: Type '" + typeof value + "' not supported for value '" + String(value) + "'");

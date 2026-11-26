@@ -11,9 +11,9 @@ if (start === -1 || end === -1 || end < start) throw new Error("FormData parsing
 
 // oxlint-disable-next-line no-function-constructor -- lifting a pure block out of the text-only prelude for test
 const load = new Function(
-  `${src.slice(start, end)}\n   return { __sbParseUrlencodedFormData, __sbParseMultipartFormData, __sbFormDataFromBody };`,
+  `const __sbIsFn = (v) => typeof v === "function";\n${src.slice(start, end)}\n   return { __sbParseUrlencodedFormData, __sbParseMultipartFormData, __sbFormDataFromBody, __sbFormDataOf };`,
 );
-const { __sbParseUrlencodedFormData, __sbParseMultipartFormData, __sbFormDataFromBody } = load();
+const { __sbParseUrlencodedFormData, __sbParseMultipartFormData, __sbFormDataFromBody, __sbFormDataOf } = load();
 
 const headers = (contentType) => ({ get: (k) => (k.toLowerCase() === "content-type" ? contentType : null) });
 
@@ -73,4 +73,19 @@ test("__sbFormDataFromBody: dispatches on content-type, quoted or bare boundary"
 
 test("__sbFormDataFromBody: multipart with no boundary throws instead of silently misparsing", () => {
   expect(() => __sbFormDataFromBody(headers("multipart/form-data"), "")).toThrow(/boundary/);
+});
+
+test("__sbFormDataOf awaits text() from compatibility date 2026-10-27 (a Promise) and takes a string before it", async () => {
+  const urlencoded = headers("application/x-www-form-urlencoded");
+  const multipart = headers("multipart/form-data; boundary=XX");
+  const part = '--XX\r\nContent-Disposition: form-data; name="a"\r\n\r\n1\r\n--XX--\r\n';
+  const asyncFd = await __sbFormDataOf({ headers: urlencoded, text: () => Promise.resolve("name=Ada&lang=js") });
+  expect([...asyncFd.entries()]).toEqual([
+    ["name", "Ada"],
+    ["lang", "js"],
+  ]);
+  const asyncMultipart = await __sbFormDataOf({ headers: multipart, text: () => Promise.resolve(part) });
+  expect(asyncMultipart.get("a")).toBe("1");
+  const syncFd = __sbFormDataOf({ headers: urlencoded, text: () => "name=Ada" });
+  expect(syncFd.get("name")).toBe("Ada");
 });

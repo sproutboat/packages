@@ -1,0 +1,42 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: sproutboat <noreply@sproutboat.com>
+Date: Thu, 26 Nov 2026 02:04:59 +0100
+Subject: [PATCH] object: storing an object with no toString into an array by a
+ string index no longer throws (P17)
+
+`arr["2"] = Object.create(null)` threw "Cannot convert an object to primitive". The array store path tests for a -0 or +0
+number with `Porffor.fastAnd(type(value) == number, value === 0, 1 / value == Infinity)`, and fastAnd evaluates every operand, so
+`1 / value` converted a non-number value with ToNumber first: an ordinary object gave NaN, an object with a null prototype
+has no toString or valueOf and threw. Hono's RegExpRouter does `handlerMap[i] = handlerData[...]` in a `for (const i in sparse)`
+loop over arrays that hold `Object.create(null)` parameter maps, so every Hono app with a `:param` route failed on every
+request (the default router). The two stores (array element and the typed shared copy) now use `&&`, which stops at the type test.
+
+Class: upstream
+Pass: patchArrayStoreZeroTest (P17)
+Upstream: not filed
+---
+ compiler/builtins/_internal_object.ts | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/compiler/builtins/_internal_object.ts b/compiler/builtins/_internal_object.ts
+index 32d99928ef24746dd0bd410fd3b04fafa9cc43dd..bfc1bc98f60c25b37c36fb6edeaea9cb738e1c81 100644
+--- a/compiler/builtins/_internal_object.ts
++++ b/compiler/builtins/_internal_object.ts
+@@ -1675,7 +1675,7 @@ export const __Porffor_object_set = (_obj: any, key: any, value: any): any => {
+       if (needed > Porffor.IR.loadI32(arr, 0)) Porffor.IR.storeI32(arr, 0, needed);
+ 
+       const entry: i32 = entries + index * 8;
+-      if (Porffor.fastAnd(Porffor.type(value) == Porffor.TYPES.number, value === 0, 1 / value == Infinity)) {
++      if (Porffor.type(value) == Porffor.TYPES.number && value === 0 && 1 / value == Infinity) {
+         Porffor.IR.storeU64(entry, 0, -2243003720663040);
+       } else {
+         Porffor.IR.storeJv(entry, 0, value);
+@@ -1940,7 +1940,7 @@ export const __Porffor_object_setStrict = (_obj: any, key: any, value: any): any
+       if (needed > Porffor.IR.loadI32(arr, 0)) Porffor.IR.storeI32(arr, 0, needed);
+ 
+       const entry: i32 = entries + index * 8;
+-      if (Porffor.fastAnd(Porffor.type(value) == Porffor.TYPES.number, value === 0, 1 / value == Infinity)) {
++      if (Porffor.type(value) == Porffor.TYPES.number && value === 0 && 1 / value == Infinity) {
+         Porffor.IR.storeU64(entry, 0, -2243003720663040);
+       } else {
+         Porffor.IR.storeJv(entry, 0, value);

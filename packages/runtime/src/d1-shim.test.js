@@ -471,3 +471,10 @@ test("from 2026-11-03: every number binds as a REAL, as in workerd", async () =>
   const old = fresh("2026-11-02");
   expect(await old.prepare("SELECT typeof(?1) AS a").bind(1).first("a")).toBe("integer");
 });
+
+test("from 2026-10-24: a Date binds as its ISO string (an invalid Date as NULL), as D1 serialises it (Better Auth sign-up)", async () => {
+  const DB = fresh("2026-10-24");
+  const when = new Date("2026-11-26T01:02:03.456Z");
+  const row = await DB.prepare("SELECT ?1 AS at, ?2 AS bad").bind(when, new Date("nope")).first();
+  expect(row).toEqual({ at: "2026-11-26T01:02:03.456Z", bad: null });
+});
