@@ -334,3 +334,38 @@ describe("validateModules", () => {
     expect(validateModules([{ name: "a.js", type: "esm", sha256: "a".repeat(64) }])).toEqual([]);
   });
 });
+
+describe("review findings", () => {
+  test("one assets binding and one version metadata binding", () => {
+    const two = (type: string) => [
+      { type, name: "A" },
+      { type, name: "B" },
+    ];
+    expect(refusal({ ...base, bindings: two("assets") })[0]?.message).toBe("an upload has at most one assets binding");
+    expect(refusal({ ...base, bindings: two("version_metadata") })[0]?.message).toContain("version_metadata");
+  });
+
+  test("a service binding names the app of its project: another environment is refused", () => {
+    const service = (environment: string) => ({
+      ...base,
+      bindings: [{ type: "service", name: "S", service: "x", environment }],
+    });
+    ok(service("production"));
+    expect(refusal(service("staging"))[0]?.path).toBe("metadata.bindings[0].environment");
+  });
+
+  test("migrations take steps or one flat step, never both", () => {
+    expect(refusal({ ...base, migrations: { steps: [], deleted_classes: ["Old"] } })[0]?.message).toContain(
+      "mixes steps with deleted_classes",
+    );
+    expect(refusal({ ...base, migrations: { steps: [{ new_classes: ["A"] }], new_classes: ["B"] } })[0]?.reason).toBe(
+      "metadata-invalid",
+    );
+  });
+
+  test("two consumers of one queue are refused whatever the case", () => {
+    const queue = { type: "queue", name: "JOBS", queue_name: "jobs" };
+    const errors = refusal({ ...base, bindings: [queue], queue_consumers: [{ queue: "jobs" }, { queue: "JOBS" }] });
+    expect(errors[0]?.message).toContain('"JOBS" twice');
+  });
+});

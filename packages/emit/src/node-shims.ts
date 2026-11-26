@@ -228,7 +228,7 @@ var path = { resolve, normalize, isAbsolute, join, relative, dirname, basename, 
 path.posix = path;
 path.win32 = path;
 export default path;
-export { resolve, normalize, isAbsolute, join, relative, dirname, basename, extname, format, parse, sep, delimiter };
+export { resolve, normalize, isAbsolute, join, relative, dirname, basename, extname, format, parse, sep, delimiter, path as posix };
 `;
 
 /** querystring over plain string ops: Bun's polyfill pulls in a full Buffer that the capability check rejects. */

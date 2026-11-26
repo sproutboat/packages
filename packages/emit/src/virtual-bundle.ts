@@ -28,6 +28,20 @@ const EXTERNAL = new Set(["cloudflare:workers", "cloudflare:sockets"]);
 const SHADOWED_BUILTIN_FUNCTIONS =
   /([=(:,?&|]\s*|\breturn\s+)function\s+(escape|unescape|eval|isNaN|isFinite|parseInt|parseFloat|encodeURI|encodeURIComponent|decodeURI|decodeURIComponent)\s*\(/g;
 
+/** Rename in code only: text inside a string, template or comment stays as written. */
+function renameShadowing(source: string): string {
+  const masked = maskNonCode(source);
+  let out = "";
+  let copied = 0;
+  for (const match of masked.matchAll(SHADOWED_BUILTIN_FUNCTIONS)) {
+    const name = match[2]!;
+    const nameAt = masked.indexOf(name, match.index + match[1]!.length);
+    out += `${source.slice(copied, nameAt)}${name}_sb`;
+    copied = nameAt + name.length;
+  }
+  return out + source.slice(copied);
+}
+
 const POPULATE_PROCESS_ENV = `
 const source = globalThis.env;
 if (source !== undefined && source !== null) {
@@ -125,10 +139,7 @@ export function prepareModuleSource(
   input: Pick<BundleInput, "compatibilityDate" | "compatibilityFlags">,
 ): string {
   if (input.compatibilityDate < SOCKETS_DATE) return source;
-  const renamed = source.replace(
-    SHADOWED_BUILTIN_FUNCTIONS,
-    (_m, lead: string, name: string) => `${lead}function ${name}_sb(`,
-  );
+  const renamed = renameShadowing(source);
   if (!nodejsCompatEnabled(input.compatibilityFlags, input.compatibilityDate)) return renamed;
   return bindNodeGlobals(renamed);
 }
@@ -193,6 +204,8 @@ export async function bundleModules(input: BundleInput): Promise<string> {
   if (main === undefined || main.type !== "esm")
     throw new EmitError([issue("module-missing", `main_module "${input.mainModule}" is not an uploaded ES module`)]);
   const compat = nodejsCompatEnabled(input.compatibilityFlags, input.compatibilityDate);
+  // `nodejs_als` alone brings AsyncLocalStorage and nothing else of Node.
+  const alsOnly = !compat && input.compatibilityFlags.includes("nodejs_als");
   const sockets = input.compatibilityDate >= SOCKETS_DATE;
 
   const mainText = text(main);
@@ -231,6 +244,8 @@ export async function bundleModules(input: BundleInput): Promise<string> {
                 if (uploaded.type === "sourcemap") throw noSuchModule(specifier, importer);
                 return { path: uploaded.name, namespace: NS_MODULE };
               }
+              if (alsOnly && (specifier === "node:async_hooks" || specifier === "async_hooks"))
+                return { path: "node:async_hooks", namespace: NS_SHIM };
               if (compat && builtinName(specifier) !== null) {
                 const shim = shims.get(specifier);
                 if (shim !== undefined) return { path: specifier, namespace: NS_SHIM };

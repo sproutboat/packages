@@ -428,3 +428,34 @@ describe("hostile input", () => {
     expect(error.reason).toBe("compat-date-invalid");
   });
 });
+
+describe("review findings", () => {
+  test("nodejs_als alone gives AsyncLocalStorage and no other built-in", async () => {
+    const als = `import { AsyncLocalStorage } from "node:async_hooks"; export default { fetch() { return new Response(String(new AsyncLocalStorage().run(1, () => 1))); } };`;
+    const old = meta({ compatibility_date: "2026-08-03", compatibility_flags: ["nodejs_als"] });
+    expect((await emit([esm("index.js", als), esm("b.js", "export {};")], old)).bundled).toContain("AsyncLocalStorage");
+    const buffer = `import { Buffer } from "node:buffer"; export default { fetch() { return new Response(Buffer.name); } };`;
+    expect((await refusal(emit([esm("index.js", buffer)], old))).reason).toBe("no-such-module");
+  });
+
+  test("node:path exports posix by name as well as on the default export", async () => {
+    const source = `import path, { posix } from "node:path"; export default { fetch() { return new Response(posix.join("a", "b") + path.posix.sep); } };`;
+    const result = await emit([esm("index.js", source), esm("b.js", "export {};")]);
+    expect(result.bundled).toContain("posix");
+    expect(result.bundled).not.toMatch(/^import /m);
+  });
+
+  test("a builtin-named function expression is renamed in code, never inside a string", async () => {
+    const source = `import "./lib.js"; export const note = "return function parseInt(x) {}"; export const f = function parseInt(x) { return x; }; export default { fetch() { return new Response(note + f(1)); } };`;
+    const result = await emit([esm("index.js", source), esm("lib.js", "export {};")]);
+    expect(result.bundled).toContain('"return function parseInt(x) {}"');
+    expect(result.bundled).toContain("function parseInt_sb(x)");
+  });
+
+  test("a computed import() is not a way past the bundler: the source check refuses it", async () => {
+    const source = `export default { async fetch(request) { const name = new URL(request.url).pathname; return new Response(String(await import(name))); } };`;
+    const error = await refusal(emit([esm("index.js", source), esm("secret.js", "export default 1;")]));
+    expect(error.reason).toBe("capability-check");
+    expect(error.message).toContain("dynamic import() is not supported");
+  });
+});

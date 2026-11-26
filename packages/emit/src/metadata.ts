@@ -204,6 +204,7 @@ export const ASSETS_STORE_MIN_DATE = "2026-11-22";
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const CLASS_NAME = /^[A-Za-z_$][\w$]*$/;
 const CRON_CHARS = /^[0-9A-Za-z*,/ -]+$/;
+const FLAT_STEP_KEYS = ["new_classes", "new_sqlite_classes"] as const;
 const REFUSED_STEP_KEYS = ["renamed_classes", "deleted_classes", "transferred_classes"] as const;
 
 /** A cron as stored: single spaces, five fields, at most 128 characters of the allowed set. Returns null if invalid. */
@@ -356,6 +357,15 @@ function validateBinding(c: Collector, raw: Input, index: number): WorkerBinding
     case "service": {
       const service = stringField(c, raw, "service", path, true);
       if (service === undefined) return undefined;
+      if (raw.environment !== undefined && raw.environment !== "production") {
+        bad(
+          c,
+          "binding-invalid",
+          `${path}.environment is not supported: a service binding names the app of its project`,
+          `${path}.environment`,
+        );
+        return undefined;
+      }
       if (raw.entrypoint !== undefined && raw.entrypoint !== "default") {
         bad(
           c,
@@ -404,7 +414,10 @@ function validateMigrations(c: Collector, raw: Input): Migrations | undefined {
     bad(c, "metadata-invalid", `${path} must be an object`, path);
     return undefined;
   }
-  // Cloudflare takes either {old_tag, new_tag, steps: [...]} or one flat step.
+  // Cloudflare takes either {old_tag, new_tag, steps: [...]} or one flat step, never both.
+  const flat = [...FLAT_STEP_KEYS, ...REFUSED_STEP_KEYS].filter((key) => raw[key] !== undefined);
+  if (raw.steps !== undefined && flat.length > 0)
+    bad(c, "metadata-invalid", `${path} mixes steps with ${flat.join(", ")}; use one form`, path);
   const steps: MigrationStep[] = [];
   migrationSteps(c, raw, path).forEach((entry, at) => {
     const stepPath = raw.steps === undefined ? path : `${path}.steps[${at}]`;
@@ -645,6 +658,10 @@ function validateBindings(c: Collector, raw: Input): WorkerBinding[] {
     names.add(binding.name);
     bindings.push(binding);
   });
+  // The wrapper takes one assets binding and one version metadata binding.
+  for (const type of ["assets", "version_metadata"] as const)
+    if (bindings.filter((b) => b.type === type).length > 1)
+      bad(c, "binding-invalid", `an upload has at most one ${type} binding`, "metadata.bindings");
   // 64 counts record bindings and services; baked vars and version metadata are not bindings of the record.
   const counted = bindings.filter(
     (b) => b.type !== "plain_text" && b.type !== "json" && b.type !== "version_metadata",
@@ -723,6 +740,18 @@ export function validateMetadata(input: Input, options: ValidateMetadataOptions 
   const crons = validateCrons(c, input.triggers);
   const consumers = validateConsumers(c, input.queue_consumers);
 
+  const consumed = new Set<string>();
+  for (const consumer of consumers ?? []) {
+    const name = consumer.queue.toLowerCase();
+    if (consumed.has(name))
+      bad(
+        c,
+        "metadata-invalid",
+        `queue_consumers names the queue "${consumer.queue}" twice`,
+        "metadata.queue_consumers",
+      );
+    consumed.add(name);
+  }
   const boundQueues = new Set(bindings.flatMap((b) => (b.type === "queue" ? [b.queue_name.toLowerCase()] : [])));
   for (const consumer of consumers ?? [])
     if (!boundQueues.has(consumer.queue.toLowerCase()))
