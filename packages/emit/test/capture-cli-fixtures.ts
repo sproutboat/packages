@@ -7,6 +7,7 @@ import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, write
 import { join, resolve } from "node:path";
 import { REGION_MARKER } from "../src/emit";
 import { loadPrelude } from "../src/host";
+import { canonical } from "./canonical";
 
 type Variant = { name: string; dir: string; date?: string; wrangler?: string; versionMetadata?: boolean };
 
@@ -139,11 +140,20 @@ for (const variant of projects()) {
   const unit = await standalone.emitStandalone(input, { forCloud: true });
   modes.cloud = { full: readFileSync(unit.generatedPath, "utf8"), assetBake: unit.assetBake?.bake ?? false };
 
-  const record: { [mode: string]: { sha256: string; bytes: number; preludeSha256: string; assetBake?: boolean } } = {};
+  const record: {
+    [mode: string]: {
+      sha256: string;
+      canonicalSha256: string;
+      bytes: number;
+      preludeSha256: string;
+      assetBake?: boolean;
+    };
+  } = {};
   for (const [mode, { full, assetBake }] of Object.entries(modes)) {
     writeFileSync(join(dest, `region.${mode}.js`), regionOf(full));
     record[mode] = {
       sha256: sha(full),
+      canonicalSha256: sha(canonical(full)),
       bytes: full.length,
       preludeSha256: sha(loadPrelude(mode === "broker" ? "broker" : "embedded")),
     };

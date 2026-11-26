@@ -7,6 +7,7 @@ import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, test } from "bun:test";
 import type { SproutboatConfig } from "@sproutboat/config";
+import { canonical } from "./canonical";
 import { bakeAssets, deriveBindings, emitFromBundle, fromConfig, loadPrelude, type EmitOptions } from "../src/index";
 
 type Mode = "broker" | "standalone" | "cloud";
@@ -14,7 +15,13 @@ const asMode = (name: string): Mode => {
   if (name === "broker" || name === "standalone" || name === "cloud") return name;
   throw new Error(`unknown mode ${name}`);
 };
-type ModeRecord = { sha256: string; bytes: number; preludeSha256: string; assetBake?: boolean };
+type ModeRecord = {
+  sha256: string;
+  canonicalSha256: string;
+  bytes: number;
+  preludeSha256: string;
+  assetBake?: boolean;
+};
 
 const root = resolve(import.meta.dir, "fixtures/cli");
 const names = readdirSync(root).sort();
@@ -62,7 +69,7 @@ describe("the CLI's emit, reproduced from its bundle and config", () => {
           { modules, metadata: fromConfig(config) },
           optionsFor(dir, config, mode, record, golden),
         );
-        expect(result.region).toBe(golden);
+        expect(canonical(result.region)).toBe(canonical(golden));
         // Without a prelude the output is the region and nothing else.
         expect(result.source).toBe(result.region);
       });
@@ -75,7 +82,9 @@ describe("the CLI's emit, reproduced from its bundle and config", () => {
         const options = { ...optionsFor(dir, config, mode, record, golden), prelude };
         const result = await emitFromBundle({ modules, metadata: fromConfig(config) }, options);
         expect(result.source.length).toBe(record.bytes);
-        expect(sha(result.source)).toBe(record.sha256);
+        expect(sha(canonical(result.source))).toBe(record.canonicalSha256);
+        // On the machine the CLI ran on, the plain bytes match as well.
+        if (process.platform === "darwin") expect(sha(result.source)).toBe(record.sha256);
       });
     }
   }
@@ -101,4 +110,14 @@ describe("the record side: spec.bindings, crons and queue consumers", () => {
       expect(derived.warnings).toEqual(expected.warnings);
     });
   }
+});
+
+describe("canonical", () => {
+  test("sorts the baked file lists and nothing else", () => {
+    const entry = { hash: "h", size: 1, type: "text/plain" };
+    const line = (order: string[]) =>
+      `a\nglobalThis.__sbAssets = ${JSON.stringify({ manifest: { notFound: "none", files: Object.fromEntries(order.map((k) => [k, entry])) }, files: Object.fromEntries(order.map((k) => [k, "x"])) })};\nb\n`;
+    expect(canonical(line(["/b", "/a"]))).toBe(canonical(line(["/a", "/b"])));
+    expect(canonical("no assets here")).toBe("no assets here");
+  });
 });
