@@ -1,5 +1,15 @@
 # @sproutboat/toolchain
 
+## 0.30.0
+
+### Minor Changes
+
+- 09d4f0a: Compat wave 2: the refusal of the compiler's intrinsics only refuses names in a builtin namespace (`__Porffor_*`, `__Array_*`, `__ecma262_*`), so `__zod_*`, `__rou3_*`, `__kysely_*`, `__COMPILER_RUNTIME`, `__SECRET_INTERNALS_...` and partyserver's `__unsafe_ensureInitialized` compile. Porffor patches P16 (`Date` parses the en-US `toLocaleString` shape, RFC 2822 and `toString` shapes, and applies a `GMT+0100` offset) and P17 (`arr["2"] = Object.create(null)` no longer throws, which made every Hono app with a `:param` route fail on its default router).
+
+### Patch Changes
+
+- 09d4f0a: `Headers.keys()`, `values()` and `entries()` return iterators, as in the Fetch spec. They returned plain Arrays, so `headers.keys().next()` threw a message-less TypeError. Effect's `HttpServerResponse.toWeb` does exactly that on a raw `101` response, so an Alchemy hibernating-WebSocket room answered 500. `for...of`, spread and `Object.fromEntries(headers)` work as before. This changes the shared prelude (the web classes), so it reaches production only with the next generation.
+
 ## 0.29.1
 
 ### Patch Changes
