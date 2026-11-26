@@ -1,0 +1,7 @@
+{
+  "main_module": "index.js",
+  "compatibility_date": "2026-08-31",
+  "compatibility_flags": ["nodejs_compat"],
+  "bindings": [{ "type": "durable_object_namespace", "name": "COUNTER", "class_name": "Counter" }],
+  "migrations": { "tag": "v1", "new_tag": "v1", "steps": [{ "new_sqlite_classes": ["Counter"] }] }
+}

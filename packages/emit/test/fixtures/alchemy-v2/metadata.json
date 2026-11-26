@@ -1,0 +1,20 @@
+{
+  "main_module": "Api.js",
+  "compatibility_date": "2026-08-31",
+  "compatibility_flags": ["new_module_registry"],
+  "bindings": [
+    { "type": "plain_text", "name": "ALCHEMY_PHASE", "text": "runtime" },
+    { "type": "plain_text", "name": "ALCHEMY_WORKER_NAME", "text": "alchemy-demo" },
+    { "type": "plain_text", "name": "ALCHEMY_STACK_NAME", "text": "AlchemyDemo" },
+    { "type": "plain_text", "name": "ALCHEMY_STAGE", "text": "prod" },
+    { "type": "durable_object_namespace", "name": "COUNTER", "class_name": "COUNTER" },
+    { "type": "durable_object_namespace", "name": "ROOMS", "class_name": "ROOMS" },
+    { "type": "durable_object_namespace", "name": "RPCCOUNTER", "class_name": "RPCCOUNTER" }
+  ],
+  "migrations": {
+    "new_tag": "alchemy-demo-v1",
+    "steps": [{ "new_sqlite_classes": ["COUNTER", "ROOMS", "RPCCOUNTER"] }]
+  },
+  "observability": { "enabled": true },
+  "annotations": { "workers/message": "alchemy deploy --stage prod" }
+}

@@ -2,4 +2,4 @@
 "@sproutboat/emit": minor
 ---
 
-New package: the emitter of design 032. This first release holds the metadata schema (Cloudflare script-upload field names, with Sproutboat's crons and queue consumers as marked extensions), its validation and the module checks, with stable refusal reasons. The bundler, the binding mapping and `emitFromBundle` follow.
+New package: the emitter of design 032. `emitFromBundle` turns modules plus Cloudflare script-upload metadata into the module Sproutboat compiles, byte for byte what the CLI writes today for the same project (`fromConfig` maps a project config to the same metadata). It holds the metadata schema and its validation with stable refusal reasons, the Cloudflare binding mapping to the runtime's bindings and the app record, the virtual-module bundler with the Node shims, the capability check, and the wrap without the prelude.

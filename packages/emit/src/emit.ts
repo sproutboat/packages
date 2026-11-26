@@ -17,6 +17,7 @@ import {
   validateModules,
   type ModuleInput,
   type ValidateMetadataOptions,
+  stripSecretValues,
   type WorkerMetadata,
 } from "./metadata";
 import { bundleModules, exportedNames } from "./virtual-bundle";
@@ -145,7 +146,7 @@ export async function emitFromBundle(input: EmitInput, options: EmitOptions): Pr
     source: options.prelude === undefined ? region : wrapped,
     region,
     bundled,
-    metadata,
+    metadata: stripSecretValues(metadata),
     bindings,
     warnings: [...checked.warnings, ...bindings.warnings],
   };

@@ -17,7 +17,9 @@
           "nodejs_compat_v2",
           "nodejs_als",
           "nodejs_compat_populate_process_env",
-          "global_fetch_strictly_public"
+          "global_fetch_strictly_public",
+          "new_module_registry",
+          "no_nodejs_compat"
         ]
       }
     },

@@ -6,7 +6,7 @@
 import { builtinModules } from "node:module";
 import { SOCKETS_DATE, maskNonCode } from "@sproutboat/runtime";
 import { EmitError, issue } from "./errors";
-import { hasNodejsCompat } from "./flags";
+import { nodejsCompatEnabled } from "./flags";
 import { MODULE_TYPES, type ModuleInput } from "./metadata";
 import { NODE_SHIMS, SOCKET_NODE_SHIMS } from "./node-shims";
 
@@ -74,7 +74,7 @@ const text = (module: ModuleInput): string => {
 /** Cloudflare's wording for an import that names nothing uploaded. */
 const noSuchModule = (specifier: string, importer: string) =>
   new EmitError([
-    issue("no-such-module", `No such module "${specifier}".${importer === "" ? "" : ` Imported from "${importer}"`}`),
+    issue("no-such-module", `No such module "${specifier}"${importer === "" ? "" : `. Imported from "${importer}"`}`),
   ]);
 
 /** The uploaded name a specifier means: `./x` and `../x` from the importer's directory, anything else from the root. */
@@ -129,14 +129,25 @@ export function prepareModuleSource(
     SHADOWED_BUILTIN_FUNCTIONS,
     (_m, lead: string, name: string) => `${lead}function ${name}_sb(`,
   );
-  if (!hasNodejsCompat(input.compatibilityFlags)) return renamed;
+  if (!nodejsCompatEnabled(input.compatibilityFlags, input.compatibilityDate)) return renamed;
   return bindNodeGlobals(renamed);
 }
 
-/** Refuse what must never reach the bundler: import attributes in any code module. */
+/** A syntax error is the bundler's to report, with its own message. */
+function scanImports(source: string) {
+  try {
+    return new Bun.Transpiler({ loader: "js" }).scanImports(source);
+  } catch {
+    return [];
+  }
+}
+
+/** Refuse what must never reach the bundler: import attributes and `bun:` specifiers in any code module. */
 export function checkImportAttributes(modules: readonly ModuleInput[]): void {
   for (const module of modules) {
     if (module.type !== "esm" && module.type !== "cjs") continue;
+    for (const entry of scanImports(text(module)))
+      if (entry.path.startsWith("bun:")) throw noSuchModule(entry.path, module.name);
     if (IMPORT_ATTRIBUTE.test(maskNonCode(text(module))))
       throw new EmitError([
         issue(
@@ -181,7 +192,7 @@ export async function bundleModules(input: BundleInput): Promise<string> {
   const main = byName.get(input.mainModule);
   if (main === undefined || main.type !== "esm")
     throw new EmitError([issue("module-missing", `main_module "${input.mainModule}" is not an uploaded ES module`)]);
-  const compat = hasNodejsCompat(input.compatibilityFlags);
+  const compat = nodejsCompatEnabled(input.compatibilityFlags, input.compatibilityDate);
   const sockets = input.compatibilityDate >= SOCKETS_DATE;
 
   const mainText = text(main);
@@ -211,7 +222,7 @@ export async function bundleModules(input: BundleInput): Promise<string> {
               const specifier = args.path;
               if (args.importer === "" && specifier.startsWith(ENTRY))
                 return { path: specifier.slice(ENTRY.length), namespace: NS_MODULE };
-              const importer = args.namespace === NS_MODULE ? args.importer : "";
+              const importer = args.importer;
               if (EXTERNAL.has(specifier)) return { path: specifier, external: true };
               if (specifier === PROCESS_SPECIFIER && globalsUsed) return { path: specifier, namespace: NS_GLOBAL };
               const name = resolveName(specifier, importer);
@@ -258,6 +269,9 @@ export async function bundleModules(input: BundleInput): Promise<string> {
     const errors = cause instanceof AggregateError ? cause.errors : [cause];
     const first = errors.find((error) => error instanceof EmitError);
     if (first instanceof EmitError) throw first;
+    // The bundler hands a plugin's error on as a plain Error with the same message.
+    const missing = errors.find((error) => error instanceof Error && error.message.startsWith("No such module"));
+    if (missing instanceof Error) throw new EmitError([issue("no-such-module", missing.message)]);
     throw new EmitError([
       issue(
         "bundle-failed",

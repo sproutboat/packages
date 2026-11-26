@@ -9,3 +9,4 @@ export * from "./emit";
 export * from "./from-config";
 export { NODE_SHIMS, SOCKET_NODE_SHIMS } from "./node-shims";
 export * from "./host";
+export type { Input, Json, JsonObject } from "./json";
