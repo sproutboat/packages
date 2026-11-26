@@ -1,11 +1,7 @@
 /* oxlint-disable anti-slop/no-runtime-typeof -- runtime code Porffor compiles into the binary: typeof is how a callback or a thenable is recognised there. */
-// sproutd on Porffor alpha 21: the preamble build/a21/base.ts puts before the runtime prelude
-// (inputs/shared-prelude.js, which is the same source as on alpha 19). It supplies what the alpha
-// 19 toolchain's C patches gave the prelude and alpha 21's node runtime does not: the names of the
-// alpha 19 native-fetch helpers the prelude's inline C calls (defined over alpha 21's layouts in
-// src/a21/native-host-bridge.c), the async-context alias, the host-driven timers, and the
-// unhandled-rejection report. The web classes (Headers, Request, Response, Blob, File, URL,
-// TextEncoder, TextDecoder) follow it, generated from the alpha 19 sources by base.ts.
+// sproutd on Porffor alpha 21: the preamble build/a21/base.ts puts before the runtime prelude (inputs/shared-prelude.js). It
+// supplies what the alpha 19 C patches gave the prelude and alpha 21's node runtime does not: the alpha 19 native-fetch
+// helper names (defined in src/a21/native-host-bridge.c), the async-context alias, host-driven timers and the rejection report.
 // oxlint-disable-next-line no-unused-expressions -- Porffor.c`...` is inline C the compiler consumes.
 Porffor.c`
 #include <stddef.h>
@@ -135,12 +131,9 @@ __Porffor_promise_setRejectionHook(function (reason, promise) {
   else console.error("Uncaught (in promise)", reason);
 });
 
-// Node's globals stay absent, as on alpha 19 (whose compiler has no process, setImmediate,
-// clearImmediate or global). Alpha 22 links its node runtime's versions for any such name the app
-// uses and the prelude does not own: an app then sees a Node `process` (libraries take their Node
-// paths) whose nextTick queue and immediates only the node loop drains, which a standalone binary
-// never runs (the neon Pool hung on a nextTick). Assigning a name here makes it the prelude's (P4);
-// deleting it leaves it undefined, so `typeof process` is "undefined" on both generations.
+// Node's globals stay absent, as on alpha 19. Alpha 22 links its node runtime's version of any such name the prelude does
+// not own, so an app saw a Node `process` whose nextTick queue only the node loop drains, which a standalone binary never
+// runs (the neon Pool hung). Assigning a name here makes it the prelude's (P4); deleting it leaves `typeof process` "undefined".
 globalThis.process = undefined;
 globalThis.setImmediate = undefined;
 globalThis.clearImmediate = undefined;

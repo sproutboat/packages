@@ -1,22 +1,6 @@
-/**
- * The broker transport: one long-lived loopback connection to the per-deployment
- * binding broker, `[u32 LE length][payload]` frames both ways.
- *
- * This is what a deployed sprout uses, and what `sproutboat dev` and a phase-0
- * standalone binary use. The embedded transport (transport-embedded.js) is the
- * same `__sbCall(reqJson) -> replyJson` contract with SQLite compiled in
- * instead of a broker on the other end — everything above __sbCall is shared.
- */
-// SB_BROKER_PORT / SB_BROKER_TOKEN are set by the supervisor next to $PORT.
-// If SB_BROKER_PORT is unset the shims below are never installed (compile.ts
-// only emits the __sbInstallBindings call when the project declares bindings),
-// so a plain sprout is byte-for-byte unchanged.
-// ponytail: still AF_INET loopback, not AF_UNIX. A failed v0 exchange reconnects
-// and resends; the broker deduplicates its writes (queue.send, INSERT) by request
-// id. v1 exchanges (fetch, service.fetch, R2) resend only when the broker cannot
-// have acted: the request never fully left, or a reused connection had gone
-// stale. On a host with an event loop, fetch and service.fetch run off it, on
-// one I/O thread (sb_async_submit_v1).
+// The broker transport: one long-lived loopback connection to the per-deployment broker, `[u32 LE length][payload]` frames both
+// ways, used by a deployed sprout, `sproutboat dev` and a phase-0 standalone binary. SB_BROKER_PORT / SB_BROKER_TOKEN come from the
+// supervisor; without the port no shim is installed. ponytail: AF_INET loopback, not AF_UNIX. A failed v0 exchange reconnects and resends (the broker dedupes by request id); v1 resends only when the broker cannot have acted.
 
 // oxlint-disable-next-line no-unused-expressions -- Porffor.c`...` is inline C the compiler consumes, not a JS expression.
 Porffor.c`
@@ -1324,13 +1308,9 @@ function __sbCall(reqJson) {
  */
 globalThis.__sbStartLocalTriggers = function () {};
 
-/**
- * The acknowledgement gate (design 029 S3) has nothing to gate here: its state is the embedded
- * transport's commit counter (sb_gate_op, C), and a broker-backed sprout (`sproutboat dev`, a
- * deployed sprout) captures no commits in-process. The prelude asks for it unconditionally from
- * compatibility date 2026-11-20, so this answers "0" to every question: "e" (enable) says the
- * gate is off, "b" says nothing is unconfirmed, and the counters read 0.
- */
+// The acknowledgement gate (design 029 S3) has nothing to gate here: its state is the embedded transport's commit counter
+// (sb_gate_op), and a broker-backed sprout captures no commits in-process. The prelude asks from compatibility date
+// 2026-11-20, so this answers "0" to every question: gate off, nothing unconfirmed.
 function __sbGateRaw() {
   return "0";
 }
@@ -1445,12 +1425,8 @@ globalThis.__sbR2MultipartPut = function (bucket, key, uploadId, partNumber, bod
   return reply;
 };
 
-/**
- * #232 — outbound / service fetch over a v1 frame, so the body arrives as the
- * upstream's raw bytes (one char per byte) instead of UTF-8-decoded text. A
- * broker that predates this answers v1 fetch with the body still in its JSON:
- * re-encode that to bytes so it matches today's behaviour rather than breaking.
- */
+// #232: outbound / service fetch over a v1 frame, so the body arrives as the upstream's raw bytes, not UTF-8-decoded text.
+// A broker that predates this answers with the body in its JSON: re-encode that to bytes to match today's behaviour.
 globalThis.__sbFetchUpstream = function (op, msg) {
   const req = { v: 1, id: ++__sbReqId, token: __sbEnv("SB_BROKER_TOKEN"), op };
   for (const k in msg) req[k] = msg[k];
@@ -1468,10 +1444,8 @@ globalThis.__sbFetchUpstream = function (op, msg) {
   return reply;
 };
 
-// Queues one v1 exchange for the I/O thread, under timer id `asyncId`. `stream` is "1"
-// when the reply may come as several frames, each firing the callback; a string, like
-// the embedded transport's flags, so the C below reads it the same way whatever type
-// Porffor infers.
+// Queues one v1 exchange for the I/O thread under timer id `asyncId`. `stream` is "1" when the reply may come as several
+// frames; a string, like the embedded transport's flags, so the C reads it the same whatever type Porffor infers.
 // oxlint-disable-next-line no-unused-vars -- read inside the RawC block below, not by JS.
 function __sbCallAsync(reqJson, body, asyncId, stream) {
   // oxlint-disable-next-line no-unused-expressions -- Porffor.c`...` is inline C the compiler consumes, not a JS expression.

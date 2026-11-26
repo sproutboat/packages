@@ -27,6 +27,11 @@ const handler = `export default {fetch(request) {
   out.dup = dup.get("ACCEPT");
   out.fromObject = new Headers({ "Content-Type": "text/plain", "X-A": " 1 " }).get("x-a");
   out.getCase = new Headers({ "x-a": "1" }).get("X-A");
+  const it = new Headers({ B: "2", a: "1" });
+  out.itKeys = it.keys().next().value + "|" + typeof it.keys().next;
+  out.itEntries = JSON.stringify([it.entries().next().value, it.values().next().done]);
+  out.itEmpty = String(new Headers().keys().next().done);
+  out.itSpread = JSON.stringify([...it.keys()]) + JSON.stringify([...it]);
   out.trigger = request.headers.get("X-Sb-Trigger");
   out.custom = request.headers.get("X-Custom");
   return new Response(JSON.stringify(out), { headers: { "Content-Type": "application/json", "X-Case": " kept " } });
@@ -149,6 +154,18 @@ try {
   assert.equal(out.dup, "a, b");
   assert.equal(out.fromObject, "1");
   assert.equal(out.getCase, "1");
+  // keys(), values() and entries() are iterators (Effect reads headers.keys().next().done on a raw 101 response).
+  assert.equal(out.itKeys, "a|function");
+  assert.equal(out.itEntries, JSON.stringify([["a", "1"], false]));
+  assert.equal(out.itEmpty, "true");
+  assert.equal(
+    out.itSpread,
+    JSON.stringify(["a", "b"]) +
+      JSON.stringify([
+        ["a", "1"],
+        ["b", "2"],
+      ]),
+  );
   assert.equal(out.trigger, null);
   assert.equal(out.custom, "custom");
   assert.equal(response.headers.get("x-case"), "kept");
