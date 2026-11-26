@@ -1,0 +1,18 @@
+{
+  "broker": {
+    "sha256": "5753dc23b6c5ad591f78b2d16f0fc22c08342ea62241dee0e1dbfb237989083a",
+    "bytes": 596924,
+    "preludeSha256": "4b6f3a12aee9976979f151ecab4686a9e0cabf933ec9ccf965e10367741ef1f7"
+  },
+  "standalone": {
+    "sha256": "5df92d8011fcfa6005671b6415e6597c9d946bd41dfcfe3617c9c67ab9ec2b22",
+    "bytes": 888617,
+    "preludeSha256": "a871d3d8bd5b890d5afe2e8289ebb59b7aa51ed4a5ac66ca143366f33f4022cc"
+  },
+  "cloud": {
+    "sha256": "5df92d8011fcfa6005671b6415e6597c9d946bd41dfcfe3617c9c67ab9ec2b22",
+    "bytes": 888617,
+    "preludeSha256": "a871d3d8bd5b890d5afe2e8289ebb59b7aa51ed4a5ac66ca143366f33f4022cc",
+    "assetBake": false
+  }
+}

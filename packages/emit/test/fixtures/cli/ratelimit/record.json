@@ -1,0 +1,16 @@
+{
+  "bindings": [
+    {
+      "name": "API",
+      "kind": "ratelimit",
+      "resource_id": null,
+      "config": {
+        "limit": 3,
+        "period": 60
+      }
+    }
+  ],
+  "crons": [],
+  "queue_consumers": [],
+  "warnings": []
+}

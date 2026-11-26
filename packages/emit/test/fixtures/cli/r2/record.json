@@ -1,0 +1,13 @@
+{
+  "bindings": [
+    {
+      "name": "FILES",
+      "kind": "r2",
+      "resource_id": "files",
+      "config": {}
+    }
+  ],
+  "crons": [],
+  "queue_consumers": [],
+  "warnings": []
+}

@@ -1,0 +1,13 @@
+{
+  "bindings": [
+    {
+      "name": "EVENTS",
+      "kind": "ae",
+      "resource_id": null,
+      "config": {}
+    }
+  ],
+  "crons": [],
+  "queue_consumers": [],
+  "warnings": []
+}

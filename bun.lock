@@ -31,6 +31,7 @@
       "name": "@sproutboat/emit",
       "version": "0.0.0",
       "dependencies": {
+        "@sproutboat/assets": "^0.4.0",
         "@sproutboat/config": "^0.7.0",
         "@sproutboat/runtime": "^0.50.0",
       },

@@ -1,5 +1,6 @@
 export default {
   ignorePatterns: [
+    "packages/emit/test/fixtures/**",
     ".agent/**",
     "docs/sockets/**",
     ".agents/**",

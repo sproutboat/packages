@@ -1,0 +1,13 @@
+{
+  "bindings": [
+    {
+      "name": "LOG",
+      "kind": "kv",
+      "resource_id": "log",
+      "config": {}
+    }
+  ],
+  "crons": [],
+  "queue_consumers": [],
+  "warnings": []
+}

@@ -1,0 +1,13 @@
+{
+  "bindings": [
+    {
+      "name": "DB",
+      "kind": "d1",
+      "resource_id": "db",
+      "config": {}
+    }
+  ],
+  "crons": [],
+  "queue_consumers": [],
+  "warnings": []
+}

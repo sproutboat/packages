@@ -1,0 +1,29 @@
+{
+  "bindings": [
+    {
+      "name": "DB",
+      "kind": "d1",
+      "resource_id": "db",
+      "config": {}
+    },
+    {
+      "name": "JOBS",
+      "kind": "queue",
+      "resource_id": "jobs",
+      "config": {
+        "queue": "JOBS"
+      }
+    }
+  ],
+  "crons": [],
+  "queue_consumers": [
+    {
+      "queue": "jobs",
+      "max_batch_size": 10,
+      "max_batch_timeout_ms": 0,
+      "max_retries": 3,
+      "dead_letter_queue": null
+    }
+  ],
+  "warnings": []
+}

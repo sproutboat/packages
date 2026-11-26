@@ -1,0 +1,15 @@
+{
+  "bindings": [
+    {
+      "name": "COUNTERS",
+      "kind": "do",
+      "resource_id": null,
+      "config": {
+        "class_name": "Counter"
+      }
+    }
+  ],
+  "crons": [],
+  "queue_consumers": [],
+  "warnings": []
+}
