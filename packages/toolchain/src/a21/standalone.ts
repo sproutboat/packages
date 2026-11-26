@@ -1,16 +1,6 @@
-/**
- * The standalone binary's source shape: sproutd's worker shape applied to the CLI's generated module.
- *
- * The CLI generates one module (prelude, transport, app) that ends with `export default { port, fetch }`.
- * Compiled as it is, that default export would link the node server runtime (serve.js, uws, libuv, streams:
- * +1 MB and a JS request path per request). Instead the module is compiled as `shared-prelude.js` (so the
- * chain's P4 makes every name it declares or assigns on `globalThis` prelude-owned and no runtime module is
- * pulled in by a free `fetch`, `crypto`, `Buffer` or `process`), preceded by the preamble (the helper names
- * the generated module uses, over the current layouts, host-driven timers, the rejection hook) and the web
- * classes (vendored in `standalone-server/`), and followed by the dispatch shim; `export default` becomes
- * `globalThis.__forkHandler`. The entry (`sprout.generated.js`) just imports it. The server is the vendored
- * uWebSockets shim over the native-fetch bridge (native-fetch-a22.c), both compiled by the CLI beside the units.
- */
+// The standalone binary's source shape: sproutd's worker shape applied to the CLI's generated module, whose default export would
+// otherwise link the node server runtime (+1 MB, a JS request path per request). Compiled as `shared-prelude.js` after the preamble and
+// web classes and before the dispatch shim; `export default` becomes `globalThis.__forkHandler`. The server is the uWebSockets shim.
 import { readFileSync, writeFileSync } from "node:fs";
 import { webClassesSource } from "./standalone-server";
 // @ts-expect-error Bun's text loader supplies a string.
@@ -26,12 +16,9 @@ export const STANDALONE_A21_COMPILE_FLAGS = ["--sb-entry-file=/sproutboat/sprout
 const ENTRY_TAIL =
   /\nexport default \{\n  port: (\d+),\n  fetch\(request\) \{ return __sbEntry\(__sbUserHandlers, request\); \}\n\};\n$/;
 
-/**
- * The web classes of the standalone prelude: the vendored `standalone-server/web-classes.js` (Porffor
- * alpha 19's runtime/fetch-globals.js with the toolchain's seven class patches, minus its four C-timer
- * functions, each class assigned on `globalThis`, which on alpha 22+ binds every free reference
- * program-wide (P4)). Its provenance header says where it came from; the content is checked in.
- */
+// The web classes of the standalone prelude: the vendored `standalone-server/web-classes.js` (Porffor alpha 19's
+// fetch-globals.js with the toolchain's class patches, minus its C-timer functions, each class assigned on `globalThis`,
+// which on alpha 22+ binds every free reference program-wide (P4)). Its provenance header says where it came from.
 export function standaloneWebClasses(): string {
   const src = webClassesSource();
   const names = [...src.matchAll(/^class ([A-Za-z]+)/gm)].map((m) => m[1]);

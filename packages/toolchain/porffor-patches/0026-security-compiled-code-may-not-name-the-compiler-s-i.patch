@@ -7,7 +7,9 @@ Subject: [PATCH] security: compiled code may not name the compiler's
 `Porffor.c` puts its template text verbatim into the C output; Porffor.IR, Porffor.malloc, Porffor.link and the global
 __Porffor_* and __<Builtin>_* functions (called by builtins with unchecked arguments) are as raw. All of them are
 resolved statically, from identifiers, so the compiler now refuses the identifiers: `Porffor`, and any name of the
-form __Name_x (an intrinsic's name: __Porffor_malloc, __Array_prototype_join, __ecma262_ToString).
+form __Name_x whose Name is a builtin namespace (__Porffor_malloc, __Array_prototype_join, __ecma262_ToString). A name of the same
+shape with another Name is the program's own and passes (React's __COMPILER_RUNTIME and __SECRET_INTERNALS_..., zod's __zod_*,
+rou3's __rou3_*, kysely's __kysely_*, partyserver's __unsafe_ensureInitialized, Rolldown's __toESMCache_*).
 
 The check is on the AST right after parsing, so strings and comments never trigger it and unicode escapes are already
 decoded. It runs on every module that is not the entry, the runtime, or the shared-prelude.js and anchor-ns.js beside
@@ -22,9 +24,9 @@ Pass: refuseIntrinsics (refuse.js; modules.js, codegen.js, semantic.js)
 ---
  compiler/codegen.js  |  3 ++-
  compiler/modules.js  | 15 ++++++++++++
- compiler/refuse.js   | 54 ++++++++++++++++++++++++++++++++++++++++++++
+ compiler/refuse.js   | 55 ++++++++++++++++++++++++++++++++++++++++++++
  compiler/semantic.js |  3 ++-
- 4 files changed, 73 insertions(+), 2 deletions(-)
+ 4 files changed, 74 insertions(+), 2 deletions(-)
  create mode 100644 compiler/refuse.js
 
 diff --git a/compiler/codegen.js b/compiler/codegen.js
@@ -104,10 +106,10 @@ index 7ec2fb8d50d34d33f3607a1f78915531863073c0..b8c323e08e0c9f985f8fda11b562f61c
      literalImports(mod.body);
 diff --git a/compiler/refuse.js b/compiler/refuse.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..91e919b7e38d15ed74a2bd8aff62bc1cf71d5aa1
+index 0000000000000000000000000000000000000000..cd844924d6a4d4f7527dd169fb3cbb4d07508814
 --- /dev/null
 +++ b/compiler/refuse.js
-@@ -0,0 +1,54 @@
+@@ -0,0 +1,55 @@
 +import './prefs.js';
 +
 +// sproutboat: code compiled on someone else's behalf never names the compiler's own intrinsics.
@@ -127,12 +129,13 @@ index 0000000000000000000000000000000000000000..91e919b7e38d15ed74a2bd8aff62bc1c
 +// __ecma262_ToString, __Uint8Array___proto__, __RegExp_$1$get ... A name that is only a flag, `__DEV__`, `__proto__`,
 +// `__esModule`, `__dirname`, has no letter after its second underscore and passes.
 +const INTRINSIC = /^__[A-Za-z][A-Za-z0-9]*_(?!_*$)/;
-+// Names a bundler writes into its output that look like an intrinsic and are not one: no builtin has a namespace of this name
-+// (Rolldown's `__toESMCache_node` and `__toESMCache_esm`, which every Rolldown bundle that interops with CommonJS carries: Alchemy's).
-+// The first segment is compared whole, so `__toESMCache_x` passes and `__Array_x` does not. A builtin cannot be named like this
-+// by accident: the exhaustive test in packages/toolchain refuses every builtin dunder name of the shipped tree.
-+const BUNDLER_HELPERS = new Set([ 'toESMCache' ]);
-+export const isIntrinsicName = name => name === 'Porffor' || (INTRINSIC.test(name) && !BUNDLER_HELPERS.has(name.slice(2, name.indexOf('_', 2))));
++// Only a name in a builtin namespace is an intrinsic: the first segment after `__` is the namespace of a builtin or a standard global. Anything
++// else with the same shape is the program's own name and passes: Rolldown's `__toESMCache_node`, React's `__COMPILER_RUNTIME` and
++// `__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED`, zod's `__zod_*`, rou3's `__rou3_*`, kysely's `__kysely_*`, partyserver's
++// `__unsafe_ensureInitialized`. The exhaustive test in packages/toolchain refuses every builtin dunder name of the shipped tree, so a namespace a
++// Porffor upgrade adds fails that test until it is listed here.
++const INTRINSIC_NAMESPACES = new Set([ 'Array', 'ArrayBuffer', 'AsyncDisposableStack', 'Atomics', 'BigInt', 'Boolean', 'ByteString', 'DataView', 'Date', 'DisposableStack', 'Error', 'FinalizationRegistry', 'Function', 'Iterator', 'JSON', 'Map', 'Math', 'Number', 'Object', 'Porffor', 'Promise', 'Proxy', 'Reflect', 'RegExp', 'Set', 'SharedArrayBuffer', 'String', 'Symbol', 'TypedArray', 'Uint8Array', 'WeakMap', 'WeakRef', 'WeakSet', 'console', 'ecma262', 'performance', 'AggregateError', 'EvalError', 'RangeError', 'ReferenceError', 'SyntaxError', 'TypeError', 'URIError', 'Int8Array', 'Uint8ClampedArray', 'Int16Array', 'Uint16Array', 'Int32Array', 'Uint32Array', 'Float16Array', 'Float32Array', 'Float64Array', 'BigInt64Array', 'BigUint64Array', 'Intl', 'Temporal', 'globalThis', 'SuppressedError', 'navigator' ]);
++export const isIntrinsicName = name => name === 'Porffor' || (INTRINSIC.test(name) && INTRINSIC_NAMESPACES.has(name.slice(2, name.indexOf('_', 2))));
 +
 +const SKIP = new Set([ 'start', 'end', 'loc', 'range' ]);
 +

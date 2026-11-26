@@ -143,5 +143,49 @@ for (const channel of ["alpha-25"] as const) {
       );
       expect(lines).toEqual(["ok", "b"]);
     }, 60_000);
+
+    test("Date parses the en-US toLocaleString shape, RFC 2822 and toString shapes with offsets (P16)", async () => {
+      const samples: [string, number][] = [
+        ["11/25/2026, 6:22:39 PM", Date.UTC(2026, 10, 25, 18, 22, 39)],
+        ["1/5/2026, 12:00:00 AM", Date.UTC(2026, 0, 5, 0, 0, 0)],
+        ["12/31/2026 12:30 PM", Date.UTC(2026, 11, 31, 12, 30)],
+        ["2026/11/25 6:22 PM", Date.UTC(2026, 10, 25, 18, 22)],
+        ["2026-11-25 10:30", Date.UTC(2026, 10, 25, 10, 30)],
+        ["Nov 26, 2026", Date.UTC(2026, 10, 26)],
+        ["November 26, 2026 10:00:00 GMT+0100", Date.UTC(2026, 10, 26, 9, 0, 0)],
+        ["26 November 2026 10:00", Date.UTC(2026, 10, 26, 10, 0)],
+        ["Thu, 26 Nov 2026 10:00:00 +0100", Date.UTC(2026, 10, 26, 9, 0, 0)],
+        ["Thu Nov 26 2026 10:00:00 GMT-0500 (EST)", Date.UTC(2026, 10, 26, 15, 0, 0)],
+        ["Sun May 12 2024 02:44:13 GMT+0100 (CET)", Date.UTC(2024, 4, 12, 1, 44, 13)],
+        ["Sun, 12 May 2024 02:44:10 GMT", Date.UTC(2024, 4, 12, 2, 44, 10)],
+        ["Sat, 02 Jan 2021 03:04:05 GMT", Date.UTC(2021, 0, 2, 3, 4, 5)],
+        ["1/2/21", Date.UTC(2021, 0, 2)],
+      ];
+      const lines = await run(
+        "datelocale",
+        `for (const s of ${JSON.stringify(samples.map(([s]) => s))}) console.log(new Date(s).getTime());
+  for (const s of ["garbage", "13/45/2026", "Nov 32, 2026", ""]) console.log(new Date(s).getTime());
+  const d = new Date(1795630959123);
+  console.log(new Date(d.toUTCString()).getTime(), new Date(d.toString()).getTime(), new Date(d.toISOString()).getTime());
+  `,
+      );
+      expect(lines.slice(0, samples.length).map(Number)).toEqual(samples.map(([, t]) => t));
+      expect(lines.slice(samples.length, samples.length + 4)).toEqual(["NaN", "NaN", "NaN", "NaN"]);
+      expect(lines.slice(samples.length + 4)).toEqual(["1795630959000 1795630959000 1795630959123"]);
+    }, 60_000);
+
+    test("storing an object with no prototype into an array by a string index works; -0 stays -0 (P17, Hono's RegExpRouter)", async () => {
+      const lines = await run(
+        "arraystore",
+        `const a = []; const k = "2"; a[k] = Object.create(null); console.log(a.length);
+  const b = []; b["0"] = -0; const c = []; c["1"] = 0; console.log(Object.is(b[0], -0), Object.is(c[1], 0));
+  const handlerMap = []; const indexMap = []; indexMap[2] = 0;
+  const data = [[["h", Object.create(null)]]];
+  for (const i in indexMap) handlerMap[i] = data[indexMap[i]];
+  console.log(handlerMap.length, handlerMap[2][0][0]);
+  `,
+      );
+      expect(lines).toEqual(["3", "true true", "3 h"]);
+    }, 60_000);
   });
 }

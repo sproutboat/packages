@@ -1,8 +1,6 @@
-// Generator input only. Native modules use the generated, import-free block.
-// One static assignment per class, not a loop over the exports: Porffor resolves a bare
-// identifier such as ReadableStream at compile time from the globalThis.X assignments it
-// can see. Where the prelude is a separate unit (sproutd), a dynamic install compiled
-// `new ReadableStream()` in the app to a ReferenceError. gen-streams.ts checks the list.
+// Generator input only; native modules use the generated, import-free block. One static assignment per class, not a loop:
+// Porffor resolves a bare `ReadableStream` at compile time from visible globalThis.X assignments, and a dynamic install
+// compiled `new ReadableStream()` to a ReferenceError where the prelude is a separate unit (sproutd). gen-streams.ts checks the list.
 import * as streams from "web-streams-polyfill";
 if (globalThis.ByteLengthQueuingStrategy == null) globalThis.ByteLengthQueuingStrategy = streams.ByteLengthQueuingStrategy;
 if (globalThis.CountQueuingStrategy == null) globalThis.CountQueuingStrategy = streams.CountQueuingStrategy;
