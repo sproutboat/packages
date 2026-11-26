@@ -1,0 +1,13 @@
+{
+  "bindings": [
+    {
+      "name": "API_KEY",
+      "kind": "secret",
+      "resource_id": null,
+      "config": {}
+    }
+  ],
+  "crons": [],
+  "queue_consumers": [],
+  "warnings": []
+}

@@ -355,14 +355,14 @@ export function neutraliseExportsDetailed(source: string): { code: string; alias
 
 function neutraliseExportsText(source: string, aliasOut: Record<string, string>): string | null {
   // `export default class Name extends WorkerEntrypoint {`: the class is the handler.
-  if (/^\s*export\s+default\s+class\b/m.test(source)) {
+  if (/^[^\S\n]*export\s+default\s+class\b/m.test(source)) {
     return source
-      .replace(/^(\s*)export\s+default\s+class\b/m, "$1const __sbHandlers = class")
+      .replace(/^([^\S\n]*)export\s+default\s+class\b/m, "$1const __sbHandlers = class")
       .replace(/^export\s+(async\s+function|function|class|const|let|var)\b/gm, "$1");
   }
   if (/\bexport\s+default\s*\{/.test(source)) {
     return source
-      .replace(/^(\s*)export\s+default\s*/m, "$1const __sbHandlers = ")
+      .replace(/^([^\S\n]*)export\s+default\s*/m, "$1const __sbHandlers = ")
       .replace(/^export\s+(async\s+function|function|class|const|let|var)\b/gm, "$1");
   }
   // Not anchored to a line: a minified bundle is one line. Bundlers emit exactly one such block, at the end.

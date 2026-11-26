@@ -1,0 +1,21 @@
+{
+  "broker": {
+    "sha256": "468ea62d38e0c690c062e6ddc84682bc79f374120fc6add04ace55961fd039ec",
+    "canonicalSha256": "468ea62d38e0c690c062e6ddc84682bc79f374120fc6add04ace55961fd039ec",
+    "bytes": 572951,
+    "preludeSha256": "164b49acbeaee26b3fc176f8583eba23d406b36eca2c2b556b6f71e6cc2b91a5"
+  },
+  "standalone": {
+    "sha256": "a66df59ba87764a11291249b461bf0ffc2e9af489940b2652a8b771e3f16a2f9",
+    "canonicalSha256": "a66df59ba87764a11291249b461bf0ffc2e9af489940b2652a8b771e3f16a2f9",
+    "bytes": 862605,
+    "preludeSha256": "e1884d00afc9b93a765e93cd67ae18a4ccb8c2d63e16f203ceeab14f24b666f8"
+  },
+  "cloud": {
+    "sha256": "a66df59ba87764a11291249b461bf0ffc2e9af489940b2652a8b771e3f16a2f9",
+    "canonicalSha256": "a66df59ba87764a11291249b461bf0ffc2e9af489940b2652a8b771e3f16a2f9",
+    "bytes": 862605,
+    "preludeSha256": "e1884d00afc9b93a765e93cd67ae18a4ccb8c2d63e16f203ceeab14f24b666f8",
+    "assetBake": true
+  }
+}

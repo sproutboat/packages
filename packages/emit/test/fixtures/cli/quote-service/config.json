@@ -1,0 +1,6 @@
+{
+  "name": "quote-service",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-18",
+  "$schema": "https://sproutboat.com/schema.json"
+}

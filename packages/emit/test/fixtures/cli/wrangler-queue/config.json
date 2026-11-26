@@ -1,0 +1,20 @@
+{
+  "name": "wrangler-queue",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-23",
+  "vars": {
+    "MODE": "wrangler"
+  },
+  "queues": [
+    {
+      "binding": "JOBS",
+      "queue": "jobs",
+      "consume": false
+    },
+    {
+      "binding": "OTHER",
+      "queue": "other",
+      "max_batch_size": 5
+    }
+  ]
+}

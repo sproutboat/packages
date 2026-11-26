@@ -1,0 +1,7 @@
+{
+  "compatibility_date": "2026-08-26",
+  "compatibility_flags": [],
+  "bindings": [{ "type": "plain_text", "name": "NAME", "text": "emit" }],
+  "env": { "NAME": "emit" },
+  "requests": ["/greet", "/math", "/config", "/counter", "/nope"]
+}

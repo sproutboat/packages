@@ -1,0 +1,1751 @@
+// The kitchen-sink dashboard. No framework and no build step: every tile calls
+// this app's own /api routes, and every number comes from a response header, a
+// response body or build-info.json (written by build-web.ts).
+(function () {
+  "use strict";
+
+  var $ = function (sel) {
+    return document.querySelector(sel);
+  };
+
+  function el(tag, cls, text) {
+    var node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text !== undefined) node.textContent = text;
+    return node;
+  }
+
+  function clear(node) {
+    while (node.firstChild) node.removeChild(node.firstChild);
+  }
+
+  function fmtMs(ms) {
+    if (ms === null || ms === undefined || isNaN(ms)) return "–";
+    return ms < 10 ? ms.toFixed(2) : ms < 100 ? ms.toFixed(1) : String(Math.round(ms));
+  }
+
+  function fmtBytes(n) {
+    if (n < 1024) return n + " B";
+    if (n < 1024 * 1024) return (n / 1024).toFixed(n < 10240 ? 1 : 0) + " KB";
+    // 25 MB, 3.19 MB: the zeros of a round number are left off.
+    return Number((n / 1048576).toFixed(n < 10485760 ? 2 : 1)) + " MB";
+  }
+
+  // A count that must fit in a tile: grouped up to ten million, then 1.2B style.
+  function fmtCount(n) {
+    n = Number(n);
+    if (!isFinite(n)) return "–";
+    if (Math.abs(n) < 1e7) return n.toLocaleString("en-US");
+    return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(n);
+  }
+
+  // Cut a long name in the middle, keeping the end (the extension), for places with no CSS ellipsis.
+  function splitName(name) {
+    var cut = Math.min(8, Math.floor(name.length / 2));
+    return [name.slice(0, name.length - cut), name.slice(name.length - cut)];
+  }
+
+  // A wait as a person says it: seconds under a minute and a half, minutes after.
+  // "an hour", "30 minutes": how long a file lives.
+  function fmtTtl(seconds) {
+    if (seconds === 3600) return "an hour";
+    if (seconds % 3600 === 0) return seconds / 3600 + " hours";
+    if (seconds >= 120) return Math.round(seconds / 60) + " minutes";
+    return seconds + " seconds";
+  }
+
+  function fmtWait(s) {
+    if (s >= 5400) return Math.ceil(s / 3600) + " h";
+    return s < 90 ? s + " s" : Math.ceil(s / 60) + " min";
+  }
+
+  function ago(iso) {
+    var s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+    if (isNaN(s)) return "";
+    if (s < 5) return "now";
+    if (s < 60) return s + "s";
+    if (s < 3600) return Math.floor(s / 60) + "m";
+    if (s < 86400) return Math.floor(s / 3600) + "h";
+    return Math.floor(s / 86400) + "d";
+  }
+
+  // ---- theme and copy buttons ----------------------------------------------
+  var root = document.documentElement;
+  function applyTheme(t) {
+    root.classList.toggle("dark", t === "dark");
+    var use = document.querySelector("[data-theme-toggle] use");
+    if (use) use.setAttribute("href", t === "dark" ? "#i-sun" : "#i-moon");
+  }
+  applyTheme(root.classList.contains("dark") ? "dark" : "light");
+  $("[data-theme-toggle]").addEventListener("click", function () {
+    var next = root.classList.contains("dark") ? "light" : "dark";
+    applyTheme(next);
+    try {
+      localStorage.setItem("sb-theme", next);
+    } catch {}
+  });
+
+  document.addEventListener("click", function (event) {
+    var btn = event.target.closest("[data-copy]");
+    if (!btn) return;
+    try {
+      navigator.clipboard.writeText(btn.getAttribute("data-copy"));
+    } catch {}
+    var prev = btn.innerHTML;
+    btn.innerHTML = '<svg class="sb-icon"><use href="#i-check"/></svg> Copied';
+    setTimeout(function () {
+      btn.innerHTML = prev;
+    }, 1400);
+  });
+
+  // ---- measured requests ------------------------------------------------------
+  var samples = []; // server ms of the last requests from this tab
+  var p50hist = [];
+  var p99hist = [];
+  var logCount = 0;
+
+  function percentile(sorted, q) {
+    if (!sorted.length) return null;
+    return sorted[Math.min(sorted.length - 1, Math.ceil(q * sorted.length) - 1)];
+  }
+
+  function spark(svg, data) {
+    if (data.length < 2) {
+      svg.innerHTML = "";
+      return;
+    }
+    var mn = Math.min.apply(null, data);
+    var mx = Math.max.apply(null, data);
+    var span = mx - mn || 1;
+    var pts = data.map(function (v, i) {
+      return [(i / (data.length - 1)) * 100, 27 - ((v - mn) / span) * 22];
+    });
+    var line =
+      "M" +
+      pts
+        .map(function (p) {
+          return p[0].toFixed(1) + " " + p[1].toFixed(1);
+        })
+        .join("L");
+    svg.innerHTML =
+      '<path class="a" d="' +
+      line +
+      'L100 30L0 30Z"/><path class="l" d="' +
+      line +
+      '" vector-effect="non-scaling-stroke"/>';
+  }
+
+  function drawChart() {
+    var svg = $("#chart");
+    $("#chart-empty").hidden = samples.length > 0;
+    if (!samples.length) {
+      svg.innerHTML = "";
+      $("#chart-max").textContent = "";
+      return;
+    }
+    var w = 600;
+    var h = 200;
+    var mx = Math.max.apply(null, samples) * 1.15 || 1;
+    var sorted = samples.slice().sort(function (a, b) {
+      return a - b;
+    });
+    var med = percentile(sorted, 0.5);
+    function y(v) {
+      return h - 12 - (v / mx) * (h - 28);
+    }
+    var step = samples.length > 1 ? w / (samples.length - 1) : 0;
+    var d =
+      "M" +
+      samples
+        .map(function (v, i) {
+          return (samples.length > 1 ? i * step : w / 2).toFixed(1) + " " + y(v).toFixed(1);
+        })
+        .join("L");
+    var grid = "";
+    for (var i = 1; i < 5; i++)
+      grid += '<line class="gl" x1="0" x2="' + w + '" y1="' + (i * h) / 5 + '" y2="' + (i * h) / 5 + '"/>';
+    svg.innerHTML =
+      grid +
+      (samples.length > 1 ? '<path class="ar" d="' + d + "L" + w + " " + h + "L0 " + h + 'Z"/>' : "") +
+      '<path class="ln" d="' +
+      d +
+      '"/>' +
+      '<line class="dep" x1="0" x2="' +
+      w +
+      '" y1="' +
+      y(med) +
+      '" y2="' +
+      y(med) +
+      '" style="stroke:var(--sb-chart-series)"/>';
+    $("#chart-max").textContent = "max " + fmtMs(Math.max.apply(null, samples)) + " ms";
+    $("#ax-l").textContent = samples.length + (samples.length === 1 ? " request" : " requests") + ", oldest";
+  }
+
+  function renderMetrics() {
+    var sorted = samples.slice().sort(function (a, b) {
+      return a - b;
+    });
+    var p50 = percentile(sorted, 0.5);
+    var p99 = percentile(sorted, 0.99);
+    $("#m-p50").textContent = fmtMs(p50);
+    $("#m-p99").textContent = fmtMs(p99);
+    var of = "of the last " + samples.length + " from this tab";
+    $("#m-p50-d").textContent = samples.length ? "Median " + of : "Make a request";
+    $("#m-p99-d").textContent = samples.length ? "Slowest 1% " + of : "Make a request";
+    if (p50 !== null) {
+      p50hist.push(p50);
+      p99hist.push(p99);
+      if (p50hist.length > 28) {
+        p50hist.shift();
+        p99hist.shift();
+      }
+      spark($("#sp-p50"), p50hist);
+      spark($("#sp-p99"), p99hist);
+    }
+    drawChart();
+  }
+
+  var logEl = $("#log");
+  function logLine(method, path, status, serverMs, user) {
+    if (!logCount) clear(logEl);
+    logCount++;
+    var li = el("li", user ? "u" : "");
+    li.appendChild(el("time", "", new Date().toLocaleTimeString([], { hour12: false })));
+    li.appendChild(el("span", "m", method));
+    li.appendChild(el("span", "r", path));
+    li.appendChild(el("span", status >= 400 || status === 0 ? "bad" : "ok", status ? String(status) : "ERR"));
+    li.lastChild.style.marginInlineStart = "auto";
+    li.appendChild(el("span", "p tnum", serverMs === null ? "ws" : fmtMs(serverMs) + "ms"));
+    logEl.appendChild(li);
+    while (logEl.children.length > 14) logEl.removeChild(logEl.firstChild);
+    $("#log-count").textContent = logCount + (logCount === 1 ? " request" : " requests");
+  }
+
+  function parseServerTiming(header) {
+    if (!header) return null;
+    var m = /dur=([0-9.]+)/.exec(header);
+    return m ? parseFloat(m[1]) : null;
+  }
+
+  // Every call goes through here: it reads Server-Timing, records the request
+  // and returns { status, data, ms }. `user` marks a click rather than a refresh.
+  async function api(path, opt) {
+    opt = opt || {};
+    var method = opt.method || "GET";
+    var init = { method: method, headers: {} };
+    if (opt.json !== undefined) {
+      init.headers["content-type"] = "application/json";
+      init.body = JSON.stringify(opt.json);
+    }
+    // A file (or any Blob), sent as its own bytes with its own content type.
+    if (opt.blob !== undefined) {
+      init.headers["content-type"] = opt.blob.type || "application/octet-stream";
+      init.body = opt.blob;
+    }
+    var res;
+    try {
+      res = await fetch(path, init);
+    } catch {
+      logLine(method, path, 0, null, opt.user);
+      throw new Error("the app did not answer");
+    }
+    var data = null;
+    try {
+      data = await res.json();
+    } catch {}
+    var ms = parseServerTiming(res.headers.get("server-timing"));
+    if (ms === null && data && data.ms !== undefined) ms = Number(data.ms);
+    logLine(method, path, res.status, ms, opt.user);
+    if (ms !== null) {
+      samples.push(ms);
+      if (samples.length > 60) samples.shift();
+      renderMetrics();
+    }
+    return {
+      status: res.status,
+      ok: res.ok,
+      data: data,
+      ms: ms,
+      retryAfter: Number(res.headers.get("retry-after")) || (data && Number(data.retry_after)) || 0,
+    };
+  }
+
+  // Throw for a non-2xx reply. A 429 carries how long to wait, so a tile can say so.
+  function checked(res) {
+    if (res.ok) return;
+    var err = new Error((res.data && res.data.error) || "status " + res.status);
+    if (res.status === 429) err.retry = res.retryAfter || 5;
+    throw err;
+  }
+
+  // Re-enable a button unless it is cooling off after a 429.
+  function release(btn) {
+    if (btn && !(Number(btn.dataset.cool || 0) > Date.now())) btn.disabled = false;
+  }
+
+  // "Slow down, try again in Ns" on a tile, counting down, with its buttons paused until then.
+  function throttled(helpId, buttons, retry) {
+    var node = $(helpId);
+    var until = Date.now() + retry * 1000;
+    buttons = (buttons || []).filter(Boolean);
+    buttons.forEach(function (b) {
+      b.dataset.cool = String(until);
+      b.disabled = true;
+    });
+    if (node._cool) clearInterval(node._cool);
+    function tick() {
+      var left = Math.ceil((until - Date.now()) / 1000);
+      if (left <= 0) {
+        clearInterval(node._cool);
+        node._cool = null;
+        buttons.forEach(function (b) {
+          delete b.dataset.cool;
+          b.disabled = false;
+        });
+        setHelp(helpId, node.dataset.idle || "");
+        return;
+      }
+      setHelp(helpId, "Slow down: try again in " + fmtWait(left) + ".", "warn");
+    }
+    tick();
+    node._cool = setInterval(tick, 1000);
+  }
+
+  // The message under a tile after a failed call: a countdown for a 429, else the reason.
+  function fail(helpId, prefix, e, buttons) {
+    if (e && e.retry) throttled(helpId, buttons, e.retry);
+    else setHelp(helpId, prefix + ((e && e.message) || "failed"));
+  }
+
+  function lat(id, ms) {
+    var node = $("#lat-" + id);
+    node.querySelector("b").textContent = fmtMs(ms);
+    node.classList.remove("flash");
+    void node.offsetWidth;
+    node.classList.add("flash");
+  }
+
+  function setHelp(id, text, kind) {
+    var node = $(id);
+    node.textContent = text || "";
+    node.title = text || "";
+    node.classList.toggle("ok", kind === true);
+    node.classList.toggle("warn", kind === "warn");
+  }
+
+  // A tile whose binding this build does not have.
+  function notAvailable(tileId, title, text) {
+    var tile = $(tileId);
+    var body = tile.querySelector(".card-b");
+    var kids = Array.prototype.slice.call(body.children);
+    kids.forEach(function (k) {
+      if (!k.classList.contains("tsub") && !k.classList.contains("foot")) k.hidden = true;
+    });
+    var box = el("div", "state na");
+    box.appendChild(el("b", "", title));
+    box.appendChild(el("span", "", text));
+    body.insertBefore(box, body.querySelector(".foot"));
+  }
+
+  // ---- code panels ------------------------------------------------------------
+  var snippets = {};
+
+  function highlight(code) {
+    var out = document.createDocumentFragment();
+    var re =
+      /(\/\/[^\n]*)|("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')|\b(const|let|await|async|return|new|throw|if|for|of|function|class|export|default|try|catch|extends|this)\b|\b([A-Za-z_$][\w$]*)(?=\()/g;
+    var last = 0;
+    var m;
+    while ((m = re.exec(code))) {
+      if (m.index > last) out.appendChild(document.createTextNode(code.slice(last, m.index)));
+      var cls = m[1] ? "c" : m[2] ? "s" : m[3] ? "k" : "f";
+      out.appendChild(el("span", cls, m[0]));
+      last = m.index + m[0].length;
+    }
+    if (last < code.length) out.appendChild(document.createTextNode(code.slice(last)));
+    return out;
+  }
+
+  function fillCode(pop) {
+    if (pop.dataset.filled) return;
+    var key = pop.getAttribute("data-code");
+    var head = el("div", "cp-h");
+    head.appendChild(el("span", "mono", "src/index.js · " + key));
+    var close = el("button", "ibtn");
+    close.type = "button";
+    close.setAttribute("aria-label", "Close code");
+    close.innerHTML = '<svg class="sb-icon"><use href="#i-x"/></svg>';
+    close.addEventListener("click", function () {
+      toggleCode(pop.parentElement.querySelector(".ctog"), false);
+    });
+    head.appendChild(close);
+    var pre = el("pre", "code");
+    pre.tabIndex = 0;
+    var text = snippets[key];
+    if (text) pre.appendChild(highlight(text));
+    else pre.textContent = "The excerpt is written by build-web.ts. Run `bun run build` in dogfood/kitchen-sink.";
+    pop.appendChild(head);
+    pop.appendChild(pre);
+    pop.dataset.filled = "1";
+  }
+
+  function toggleCode(btn, force) {
+    var pop = document.getElementById(btn.getAttribute("aria-controls"));
+    var open = force === undefined ? btn.getAttribute("aria-expanded") !== "true" : force;
+    if (open) {
+      document.querySelectorAll(".ctog[aria-expanded='true']").forEach(function (other) {
+        if (other !== btn) toggleCode(other, false);
+      });
+      fillCode(pop);
+    }
+    btn.setAttribute("aria-expanded", open ? "true" : "false");
+    pop.hidden = !open;
+    btn.closest(".tile").classList.toggle("open", open);
+  }
+
+  document.querySelectorAll(".ctog").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      toggleCode(btn);
+    });
+  });
+  document.addEventListener("keydown", function (event) {
+    if (event.key !== "Escape") return;
+    var open = document.querySelector(".ctog[aria-expanded='true']");
+    if (open) {
+      toggleCode(open, false);
+      open.focus();
+    }
+  });
+  document.addEventListener("click", function (event) {
+    var open = document.querySelector(".ctog[aria-expanded='true']");
+    if (open && !event.target.closest(".tile.open")) toggleCode(open, false);
+  });
+
+  // ---- build info --------------------------------------------------------------
+  var build = null;
+
+  async function loadBuild() {
+    try {
+      var res = await fetch("/build-info.json");
+      build = await res.json();
+    } catch {
+      build = null;
+    }
+    if (!build) {
+      $("#compat").textContent = "unknown";
+      $("#built").textContent = "no build info";
+      $("#size-note").textContent =
+        "build-info.json is missing. Run bun run build in dogfood/kitchen-sink to measure sizes.";
+      $("#snippet-code").textContent = "build-info.json is missing. Run bun run build in dogfood/kitchen-sink.";
+      return;
+    }
+    snippets = build.snippets || {};
+    $("#compat").textContent = build.compatibilityDate;
+    $("#built").textContent = build.builtAt.slice(0, 10);
+    $("#n-bindings").textContent = String(build.bindings.length);
+    $("#sec-n").textContent = String(build.secrets.length);
+    $("#cron-expr").textContent = build.crons[0] || "no cron";
+
+    var mod = build.module.bytes;
+    var ast = build.assets.reduce(function (sum, a) {
+      return sum + a.bytes;
+    }, 0);
+    $("#m-mod").textContent = mod < 1024 * 100 ? (mod / 1024).toFixed(1) : String(Math.round(mod / 1024));
+    $("#m-ast").textContent = ast >= 1048576 ? (ast / 1048576).toFixed(2) : String(Math.round(ast / 1024));
+    $("#m-ast-u").textContent = ast >= 1048576 ? "MB" : "KB";
+    $("#m-ast-d").textContent = build.assets.length + " files: this page and its fonts";
+    $("#snippet-code").textContent = "";
+    $("#snippet-code").appendChild(highlight(snippets.kv || ""));
+
+    var groups = [
+      ["Worker module", "src/index.js", mod, "var(--sb-chart-series)"],
+      ["Fonts", "Figtree, JetBrains Mono", sumBy("woff2"), "var(--sb-chart-requests)"],
+      ["Page script and styles", "app.js, app.css", sumBy("js") + sumBy("css"), "var(--sb-chart-2xx)"],
+      ["HTML", "index.html", sumBy("html"), "var(--sb-chart-4xx)"],
+      [
+        "Font licences",
+        "OFL texts",
+        ast - sumBy("woff2") - sumBy("js") - sumBy("css") - sumBy("html"),
+        "var(--sb-chart-other)",
+      ],
+    ];
+    var total = mod + ast;
+    $("#size-total").textContent = fmtBytes(total) + " total";
+    var seg = $("#seg");
+    var sz = $("#sz");
+    groups.forEach(function (g) {
+      if (g[2] <= 0) return;
+      var i = el("i");
+      i.style.flex = String(g[2]);
+      i.style.background = g[3];
+      i.title = g[0] + ": " + fmtBytes(g[2]);
+      seg.appendChild(i);
+      var sw = el("span", "sw");
+      sw.style.background = g[3];
+      sz.appendChild(sw);
+      sz.appendChild(el("span", "", g[0]));
+      sz.appendChild(el("b", "", fmtBytes(g[2])));
+      sz.appendChild(el("em", "", Math.round((g[2] / total) * 100) + "%"));
+    });
+    $("#size-note").textContent =
+      "Source and assets as measured at build time. A compiled binary adds the runtime, SQLite and TLS: sproutboat build --standalone prints its size.";
+  }
+
+  function sumBy(ext) {
+    return build.assets.reduce(function (sum, a) {
+      return sum + (a.path.slice(-ext.length - 1) === "." + ext ? a.bytes : 0);
+    }, 0);
+  }
+
+  // ---- connection badge ---------------------------------------------------------
+  function badge(node, kind, label, mark) {
+    node.className = "badge" + (kind ? " " + kind : "");
+    clear(node);
+    node.appendChild(el("span", "shape " + (mark || "circle")));
+    node.appendChild(document.createTextNode(label));
+  }
+
+  var info = null;
+  async function loadInfo() {
+    try {
+      var res = await api("/api/info");
+      if (!res.ok) throw new Error("status " + res.status);
+      info = res.data;
+      badge($("#conn"), "ok", "Online", "live");
+      if (info.requests !== null && info.requests !== undefined) $("#m-req").textContent = fmtCount(info.requests);
+      else $("#m-req").textContent = "n/a";
+      $("#r2-cap").textContent = fmtBytes(info.max_upload_bytes).replace(" ", "\u00a0");
+      if (info.file_ttl_seconds) $("#r2-ttl").textContent = fmtTtl(info.file_ttl_seconds);
+      $("#r2-max").textContent = fmtBytes(info.max_total_bytes);
+      $("#r2-n-max").textContent = String(info.max_files);
+      var kinds = ["kv", "d1", "r2", "queue", "durable_object", "service"];
+      var live = kinds.filter(function (k) {
+        return info.bindings[k];
+      }).length;
+      $("#live-count").textContent = live + " of " + kinds.length + " tiles live";
+      if (!info.bindings.service) {
+        notAvailable(
+          "#t-svc",
+          "Not in standalone",
+          "This build has no service binding. A standalone binary has no edge to route a call to another deployment. Deploy to Cloud together with quote-service to use this tile.",
+        );
+        $("#svc-state").hidden = true;
+      }
+    } catch {
+      badge($("#conn"), "bad", "Offline", "tri");
+      $("#live-count").textContent = "the API did not answer";
+    }
+  }
+
+  // ---- KV --------------------------------------------------------------------------
+  function renderKv(data, withOps) {
+    $("#kv-n").textContent = fmtCount(data.n);
+    $("#kv-n").title = Number(data.n).toLocaleString("en-US");
+    $("#kv-keys").textContent = fmtCount(data.keys) + (data.keys === 1 ? " key" : " keys");
+    if (!withOps) return;
+    var ul = $("#kv-ops");
+    clear(ul);
+    data.ops.forEach(function (op) {
+      var li = el("li");
+      li.appendChild(el("span", "m", op.op));
+      li.appendChild(el("span", "k", "counter:home"));
+      li.appendChild(el("span", "v", fmtCount(op.value)));
+      li.appendChild(el("span", "p tnum", fmtMs(op.ms) + "ms"));
+      ul.appendChild(li);
+    });
+  }
+
+  async function kvLoad(user) {
+    try {
+      var res = await api("/api/kv", { user: user });
+      checked(res);
+      renderKv(res.data, false);
+      lat("kv", res.ms);
+      setHelp("#kv-help", "");
+    } catch (e) {
+      fail("#kv-help", "Could not read the counter: ", e);
+    }
+  }
+
+  $("#kv-get").addEventListener("click", function () {
+    kvLoad(true);
+  });
+  $("#kv-b").addEventListener("click", async function () {
+    var btn = this;
+    btn.disabled = true;
+    try {
+      var res = await api("/api/kv/incr", { method: "POST", user: true });
+      checked(res);
+      renderKv(res.data, true);
+      lat("kv", res.ms);
+      setHelp("#kv-help", "");
+    } catch (e) {
+      fail("#kv-help", "Could not increment: ", e, [btn, $("#kv-get")]);
+    } finally {
+      release(btn);
+    }
+  });
+
+  // ---- D1 ---------------------------------------------------------------------------
+  var seenRows = {};
+  function renderGuestbook(data) {
+    var body = $("#gb");
+    clear(body);
+    if (!data.rows.length) {
+      var tr = el("tr");
+      var empty = el("td", "empty", "No entries yet. Sign the guestbook.");
+      empty.colSpan = 4;
+      tr.appendChild(empty);
+      body.appendChild(tr);
+    }
+    data.rows.forEach(function (row) {
+      var tr = el("tr", seenRows[row.id] ? "" : "new");
+      seenRows[row.id] = true;
+      tr.appendChild(el("td", "id", "#" + row.id));
+      // dir=auto: an Arabic or Hebrew entry reads right to left without flipping the table.
+      var nm = el("td", "nm", row.name);
+      nm.dir = "auto";
+      nm.title = row.name;
+      tr.appendChild(nm);
+      var msg = el("td", "t", row.msg);
+      msg.dir = "auto";
+      msg.title = row.msg;
+      tr.appendChild(msg);
+      tr.appendChild(el("td", "et", ago(row.at)));
+      body.appendChild(tr);
+    });
+    $("#gb-n").textContent = fmtCount(data.total);
+    $("#gb-unit").textContent = data.total === 1 ? "row" : "rows";
+    var box = $("#sql");
+    clear(box);
+    data.sql.forEach(function (st) {
+      var line = el("span", "c");
+      line.appendChild(highlightSql(st.sql + ";"));
+      box.appendChild(line);
+      var binds = st.binds.length
+        ? "bound " +
+          st.binds
+            .map(function (b) {
+              return "'" + String(b).slice(0, 24) + "'";
+            })
+            .join(", ") +
+          " · "
+        : "";
+      var extra =
+        st.rows_read !== undefined ? ", " + st.rows_read + (st.rows_read === 1 ? " row read" : " rows read") : "";
+      box.appendChild(el("span", "c muted", "-- " + binds + fmtMs(st.ms) + " ms" + extra));
+    });
+    box.scrollTop = 0;
+    var last = data.sql[data.sql.length - 1];
+    $("#gb-q").textContent = last ? "query " + fmtMs(last.ms) + " ms" : "";
+  }
+
+  function highlightSql(sql) {
+    var out = document.createDocumentFragment();
+    var re = /\b(SELECT|INSERT INTO|DELETE FROM|FROM|WHERE|ORDER BY|LIMIT|VALUES|DESC|max|count)\b/g;
+    var last = 0;
+    var m;
+    while ((m = re.exec(sql))) {
+      if (m.index > last) out.appendChild(document.createTextNode(sql.slice(last, m.index)));
+      out.appendChild(el("span", m[1] === "max" || m[1] === "count" ? "f" : "k", m[0]));
+      last = m.index + m[0].length;
+    }
+    if (last < sql.length) out.appendChild(document.createTextNode(sql.slice(last)));
+    return out;
+  }
+
+  async function gbLoad(user) {
+    try {
+      var res = await api("/api/guestbook", { user: user });
+      checked(res);
+      renderGuestbook(res.data);
+      lat("d1", res.ms);
+    } catch (e) {
+      fail("#gb-help", "Could not read the guestbook: ", e);
+    }
+  }
+
+  $("#gb-form").addEventListener("submit", async function (event) {
+    event.preventDefault();
+    var name = $("#gb-name").value.trim();
+    var msg = $("#gb-msg").value.trim();
+    if (!name || !msg) {
+      setHelp("#gb-help", "Add a name and a message.");
+      return;
+    }
+    setHelp("#gb-help", "");
+    var btn = this.querySelector("button");
+    btn.disabled = true;
+    try {
+      var res = await api("/api/guestbook", { method: "POST", json: { name: name, msg: msg }, user: true });
+      checked(res);
+      renderGuestbook(res.data);
+      lat("d1", res.ms);
+      $("#gb-msg").value = "";
+    } catch (e) {
+      fail("#gb-help", "Could not sign: ", e, [btn]);
+    } finally {
+      release(btn);
+    }
+  });
+
+  // ---- R2 ---------------------------------------------------------------------------
+  // The file as the server serves it. The etag in the URL lets the browser keep it for an hour and
+  // fetch it again only when the file changes.
+  function fileUrl(obj) {
+    return (
+      "/api/r2/file?name=" +
+      encodeURIComponent(obj.name) +
+      "&v=" +
+      encodeURIComponent(String(obj.etag || "").replace(/"/g, ""))
+    );
+  }
+
+  var THUMB_TYPES = ["image/png", "image/jpeg", "image/gif", "image/webp", "image/avif"];
+
+  // A thumbnail for a small image, else an icon for the kind of file. A thumbnail that does not
+  // load (a cut-off image, a type that lied) falls back to the icon. Large images are not fetched
+  // just to draw twenty pixels.
+  function fileMark(obj) {
+    var icon =
+      obj.type.indexOf("image/") === 0
+        ? "i-image"
+        : obj.type === "application/pdf"
+          ? "i-doc"
+          : obj.type.indexOf("text/") === 0
+            ? "i-file"
+            : "i-bin";
+    function iconNode() {
+      var span = el("span", "mk");
+      span.insertAdjacentHTML("afterbegin", '<svg class="sb-icon"><use href="#' + icon + '"/></svg>');
+      return span;
+    }
+    if (THUMB_TYPES.indexOf(obj.type) < 0 || obj.size > 262144 || !obj.size) return iconNode();
+    var holder = el("span", "mk thumb");
+    var img = document.createElement("img");
+    img.alt = "";
+    img.width = 22;
+    img.height = 22;
+    img.loading = "lazy";
+    img.decoding = "async";
+    img.src = fileUrl(obj);
+    img.addEventListener("error", function () {
+      holder.replaceWith(iconNode());
+    });
+    holder.appendChild(img);
+    return holder;
+  }
+
+  // "58 min", "4 min", "<1 min" until a file expires; "expired" once it has.
+  function fmtLeft(ms) {
+    if (!(ms > 0)) return "expired";
+    if (ms < 60000) return "<1 min";
+    if (ms >= 5400000) return Math.round(ms / 3600000) + " h";
+    return Math.round(ms / 60000) + " min";
+  }
+
+  // Count the expiry cells down every 20 seconds; when one runs out, ask the server for the list,
+  // which no longer has the file.
+  setInterval(function () {
+    var cells = document.querySelectorAll("#r2-list td.ex");
+    var gone = false;
+    cells.forEach(function (cell) {
+      var left = Number(cell.dataset.expires) - Date.now();
+      cell.textContent = fmtLeft(left);
+      if (!(left > 0)) gone = true;
+    });
+    if (gone) r2Load(false);
+  }, 20000);
+
+  function renderFiles(data) {
+    var body = $("#r2-list");
+    clear(body);
+    if (!data.objects.length) {
+      var tr = el("tr");
+      var empty = el("td", "empty", "The bucket is empty. Upload a file.");
+      empty.colSpan = 4;
+      tr.appendChild(empty);
+      body.appendChild(tr);
+    }
+    data.objects.forEach(function (obj) {
+      var tr = el("tr");
+      var t = el("td", "t");
+      var wrap = el("div", "fn");
+      wrap.appendChild(fileMark(obj));
+      // The start of the name shrinks with an ellipsis; its end, the extension, stays.
+      var a = el("a");
+      var parts = splitName(obj.name);
+      a.appendChild(el("span", "a", parts[0]));
+      a.appendChild(el("span", "b", parts[1]));
+      a.href = fileUrl(obj);
+      a.title = obj.name + " · " + (obj.type || "unknown type");
+      var most = info && info.max_response_bytes ? info.max_response_bytes : 2097152;
+      if (obj.size > most) {
+        // Bigger than one response: the page reads it in Range windows and saves the pieces as one file.
+        a.title += " · downloaded in " + fmtBytes(most) + " windows";
+        a.addEventListener("click", function (event) {
+          event.preventDefault();
+          downloadBig(obj, most);
+        });
+      } else {
+        a.target = "_blank";
+        a.rel = "noopener";
+      }
+      wrap.appendChild(a);
+      t.appendChild(wrap);
+      tr.appendChild(t);
+      tr.appendChild(el("td", "", fmtBytes(obj.size)));
+      // When the file is deleted, counted down on the page and checked again by the server.
+      var ex = el("td", "ex", fmtLeft(obj.expires - Date.now()));
+      ex.dataset.expires = String(obj.expires);
+      ex.title = "Deleted at " + new Date(obj.expires).toLocaleTimeString();
+      tr.appendChild(ex);
+      var act = el("td", "act");
+      var del = el("button", "ibtn");
+      del.type = "button";
+      del.setAttribute("aria-label", "Delete " + obj.name);
+      del.innerHTML = '<svg class="sb-icon"><use href="#i-trash"/></svg>';
+      del.addEventListener("click", function () {
+        r2Delete(obj.name);
+      });
+      act.appendChild(del);
+      tr.appendChild(act);
+      body.appendChild(tr);
+    });
+    $("#r2-unit").textContent = data.objects.length === 1 ? "file" : "files";
+    $("#r2-n").textContent = String(data.objects.length) + (data.truncated ? "+" : "");
+    $("#r2-sz").textContent = fmtBytes(data.bytes);
+    $("#r2-max").textContent = info ? fmtBytes(info.max_total_bytes) : "200 MB";
+  }
+
+  async function r2Load(user) {
+    try {
+      var res = await api("/api/r2", { user: user });
+      checked(res);
+      renderFiles(res.data);
+      lat("r2", res.ms);
+    } catch (e) {
+      fail("#r2-help", "Could not list the bucket: ", e);
+    }
+  }
+
+  // Say no before sending: a dropped movie must not be read or uploaded to be refused.
+  function refuseBeforeUpload(name, size) {
+    var cap = info ? info.max_upload_bytes : 26214400;
+    if (name.length > 64) {
+      setHelp("#r2-help", "The file name is too long: 64 characters at most, this has " + name.length + ".");
+      return true;
+    }
+    if (size > cap) {
+      setHelp("#r2-help", "Too large: " + fmtBytes(size) + ". This build accepts " + fmtBytes(cap) + " per file.");
+      return true;
+    }
+    return false;
+  }
+
+  function randomId() {
+    var bytes = new Uint8Array(8);
+    crypto.getRandomValues(bytes);
+    return Array.prototype.map
+      .call(bytes, function (b) {
+        return (b + 256).toString(16).slice(1);
+      })
+      .join("");
+  }
+
+  // One chunk, with the bytes sent so far reported as they go (fetch cannot do that).
+  function putChunk(url, blob, onProgress, running) {
+    return new Promise(function (resolve, reject) {
+      var xhr = new XMLHttpRequest();
+      running.xhr = xhr;
+      xhr.open("PUT", url);
+      xhr.setRequestHeader("content-type", "application/octet-stream");
+      xhr.upload.onprogress = function (event) {
+        if (event.lengthComputable) onProgress(event.loaded);
+      };
+      xhr.onload = function () {
+        var data = null;
+        try {
+          data = JSON.parse(xhr.responseText);
+        } catch {}
+        var ms = parseServerTiming(xhr.getResponseHeader("server-timing"));
+        resolve({
+          status: xhr.status,
+          ok: xhr.status >= 200 && xhr.status < 300,
+          data: data,
+          ms: ms === null && data ? Number(data.ms) : ms,
+          retryAfter: Number(xhr.getResponseHeader("retry-after")) || (data && Number(data.retry_after)) || 0,
+        });
+      };
+      xhr.onerror = function () {
+        reject(new Error("the app did not answer"));
+      };
+      xhr.onabort = function () {
+        var err = new Error("cancelled");
+        err.cancelled = true;
+        reject(err);
+      };
+      xhr.send(blob);
+    });
+  }
+
+  var running = null;
+
+  // A file bigger than one response, read window by window with Range requests (what a browser does
+  // for video) and saved from memory as one file, with the same progress bar as an upload.
+  async function downloadBig(obj, most) {
+    if (running) {
+      setHelp("#r2-help", "A transfer is already running.");
+      return;
+    }
+    running = {};
+    setHelp("#r2-help", "");
+    $("#r2-up").hidden = false;
+    $("#r2-up-cancel").hidden = true;
+    var parts = [];
+    var at = 0;
+    try {
+      while (at < obj.size) {
+        showProgress("Downloading " + obj.name, at, obj.size);
+        var res = await fetch(fileUrl(obj), {
+          headers: { range: "bytes=" + at + "-" + (Math.min(obj.size, at + most) - 1) },
+        });
+        if (res.status === 429) {
+          var wait = Number(res.headers.get("retry-after")) || 5;
+          var data = await res.json().catch(function () {
+            return null;
+          });
+          var err = new Error((data && data.error) || "slow down");
+          err.retry = wait;
+          throw err;
+        }
+        if (res.status !== 206) throw new Error("the app answered " + res.status);
+        var buf = await res.arrayBuffer();
+        parts.push(buf);
+        at += buf.byteLength;
+        if (!buf.byteLength) throw new Error("the app sent no bytes");
+      }
+      var url = URL.createObjectURL(new Blob(parts, { type: obj.type }));
+      var link = document.createElement("a");
+      link.href = url;
+      link.download = obj.name;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(function () {
+        URL.revokeObjectURL(url);
+      }, 60000);
+      setHelp("#r2-help", "Downloaded " + fmtBytes(obj.size) + " as " + obj.name, true);
+    } catch (e) {
+      fail("#r2-help", "Download failed: ", e);
+    } finally {
+      running = null;
+      $("#r2-up").hidden = true;
+      $("#r2-up-cancel").hidden = false;
+    }
+  }
+
+  function showProgress(name, done, total) {
+    var pct = total ? Math.min(100, Math.floor((done / total) * 100)) : 100;
+    $("#r2-up-name").textContent = name;
+    $("#r2-up-pct").textContent = fmtBytes(done) + " of " + fmtBytes(total) + " · " + pct + "%";
+    $("#r2-up-fill").style.width = pct + "%";
+    $("#r2-up-bar").setAttribute("aria-valuenow", String(pct));
+  }
+
+  // blob is a File or any Blob. It goes up in chunk-sized requests of its own bytes, each with the
+  // progress shown, so a 25 MB file is 25 small requests and neither side holds the whole of it.
+  async function r2Upload(name, blob) {
+    if (refuseBeforeUpload(name, blob.size)) return;
+    if (running) {
+      setHelp("#r2-help", "An upload is already running.");
+      return;
+    }
+    var chunk = info && info.chunk_bytes ? info.chunk_bytes : 1048576;
+    var count = Math.max(1, Math.ceil(blob.size / chunk));
+    var id = randomId();
+    var type = blob.type || "application/octet-stream";
+    running = {};
+    setHelp("#r2-help", "");
+    $("#r2-up").hidden = false;
+    showProgress(name, 0, blob.size);
+    var started = performance.now();
+    var res = null;
+    try {
+      for (var n = 0; n < count; n++) {
+        var part = blob.slice(n * chunk, Math.min(blob.size, (n + 1) * chunk));
+        var url =
+          "/api/r2/chunk?name=" +
+          encodeURIComponent(name) +
+          "&id=" +
+          id +
+          "&n=" +
+          n +
+          "&count=" +
+          count +
+          "&total=" +
+          blob.size +
+          "&type=" +
+          encodeURIComponent(type);
+        var base = n * chunk;
+        for (var attempt = 0; ; attempt++) {
+          res = await putChunk(
+            url,
+            part,
+            function (sent) {
+              showProgress(name, base + sent, blob.size);
+            },
+            running,
+          );
+          // Over the per-minute budget: wait out the minute and send the chunk again.
+          if (res.status === 429 && res.data && res.data.code === "rate_limited" && attempt < 3) {
+            for (var left = res.retryAfter || 5; left > 0; left--) {
+              setHelp("#r2-help", "Slow down: continuing in " + left + " s.", "warn");
+              await new Promise(function (resolve) {
+                setTimeout(resolve, 1000);
+              });
+            }
+            setHelp("#r2-help", "");
+            continue;
+          }
+          break;
+        }
+        checked(res);
+        showProgress(name, base + part.size, blob.size);
+      }
+      renderFiles(res.data);
+      lat("r2", res.ms);
+      logLine("PUT", "/api/r2/chunk ×" + count, res.status, res.ms, true);
+      setHelp(
+        "#r2-help",
+        "Stored " +
+          fmtBytes(blob.size) +
+          " as " +
+          res.data.name +
+          " in " +
+          ((performance.now() - started) / 1000).toFixed(1) +
+          " s",
+        true,
+      );
+    } catch (e) {
+      if (e && e.cancelled) setHelp("#r2-help", "Upload cancelled.");
+      else fail("#r2-help", "Upload failed: ", e, [$("#r2-pick"), $("#r2-sample")]);
+    } finally {
+      running = null;
+      $("#r2-up").hidden = true;
+    }
+  }
+
+  $("#r2-up-cancel").addEventListener("click", function () {
+    if (running && running.xhr) running.xhr.abort();
+  });
+
+  async function r2Delete(name) {
+    try {
+      var res = await api("/api/r2?name=" + encodeURIComponent(name), { method: "DELETE", user: true });
+      checked(res);
+      renderFiles(res.data);
+      lat("r2", res.ms);
+      setHelp("#r2-help", "");
+    } catch (e) {
+      fail("#r2-help", "Delete failed: ", e);
+    }
+  }
+
+  function handleFile(file) {
+    if (file) r2Upload(file.name, file);
+  }
+
+  $("#r2-pick").addEventListener("click", function () {
+    $("#r2-file").click();
+  });
+  $("#r2-file").addEventListener("change", function () {
+    handleFile(this.files[0]);
+    this.value = "";
+  });
+  $("#r2-sample").addEventListener("click", function () {
+    var now = new Date();
+    var name = "note-" + now.toTimeString().slice(0, 8).replace(/:/g, "") + ".txt";
+    r2Upload(
+      name,
+      new Blob(["Note written at " + now.toISOString() + " from the kitchen-sink dashboard.\n"], {
+        type: "text/plain",
+      }),
+    );
+  });
+  var dz = $("#dz");
+  ["dragenter", "dragover"].forEach(function (name) {
+    dz.addEventListener(name, function (event) {
+      event.preventDefault();
+      dz.classList.add("over");
+    });
+  });
+  ["dragleave", "drop"].forEach(function (name) {
+    dz.addEventListener(name, function (event) {
+      event.preventDefault();
+      dz.classList.remove("over");
+    });
+  });
+  dz.addEventListener("drop", function (event) {
+    handleFile(event.dataTransfer.files[0]);
+  });
+
+  // ---- Durable Object chat over WebSocket -------------------------------------------
+  var myName;
+  try {
+    myName = localStorage.getItem("sb-chat-name");
+  } catch {}
+  if (!myName) {
+    myName = "guest-" + Math.random().toString(36).slice(2, 6);
+    try {
+      localStorage.setItem("sb-chat-name", myName);
+    } catch {}
+  }
+
+  var ws = null;
+  var chatBox = $("#chat");
+  var chatCount = 0;
+  var lastText = ""; // the last message sent, put back in the box if the room refuses it
+  var wsOpened = false;
+
+  function chatState(kind, label, mark) {
+    badge($("#ws-state"), kind, label, mark);
+  }
+
+  function chatNote(text, cls) {
+    var div = el("div", "empty" + (cls ? " " + cls : ""), text);
+    chatBox.appendChild(div);
+  }
+
+  // Is the list scrolled to its end (give or take a few pixels)? Only then does a new message scroll it.
+  function chatAtEnd() {
+    return chatBox.scrollHeight - chatBox.scrollTop - chatBox.clientHeight <= 24;
+  }
+
+  var chatUnread = 0;
+  function chatEnd() {
+    chatBox.scrollTop = chatBox.scrollHeight;
+    chatUnread = 0;
+    $("#chat-new").hidden = true;
+  }
+
+  chatBox.addEventListener("scroll", function () {
+    if (chatUnread && chatAtEnd()) chatEnd();
+  });
+  $("#chat-new").addEventListener("click", function () {
+    chatEnd();
+    chatBox.focus();
+  });
+
+  // One message at the end of the list, scrolled to only if the reader was at the end already or wrote
+  // it. Someone reading further up is left where they are, and told there is more below. The button
+  // that tells them floats over the list, so nothing around the list moves.
+  function addBubble(msg) {
+    var follow = !chatCount || chatAtEnd() || msg.name === myName;
+    appendBubble(msg);
+    if (follow) chatEnd();
+    else {
+      chatUnread++;
+      $("#chat-new-n").textContent = chatUnread === 1 ? "1 new message" : chatUnread + " new messages";
+      $("#chat-new").hidden = false;
+    }
+  }
+
+  function appendBubble(msg) {
+    if (!chatCount) clear(chatBox);
+    chatCount++;
+    var mine = msg.name === myName;
+    var b = el("div", "bub" + (mine ? " me" : ""));
+    var who = el("small", "", mine ? "you" : msg.name);
+    who.dir = "auto";
+    b.appendChild(who);
+    var tx = el("span", "tx", msg.text);
+    tx.dir = "auto";
+    b.appendChild(tx);
+    chatBox.appendChild(b);
+    // A flood must not grow the page: only the last 60 bubbles are kept.
+    while (chatBox.children.length > 60) chatBox.removeChild(chatBox.firstChild);
+  }
+
+  function renderPresence(p) {
+    var text =
+      p.n +
+      (p.n === 1 ? " socket" : " sockets") +
+      (p.names.length
+        ? ": " + p.names.slice(0, 4).join(", ") + (p.names.length > 4 ? " +" + (p.names.length - 4) : "")
+        : "");
+    $("#who").textContent = text;
+    $("#who").title = text;
+  }
+
+  // Connecting, and connecting again. One socket at a time: `socketGen` numbers every attempt, and a socket,
+  // a timer or a probe that belongs to an older number does nothing when it fires. While the page is not
+  // connected it retries by itself (backoff in reconnect.js) unless the room closed the socket on purpose:
+  // then it says why and waits for the button.
+  var socketGen = 0;
+  var retry = { attempt: 0, timer: 0, tick: 0, at: 0, stable: 0, final: false };
+  var RECONNECT = window.SBReconnect;
+
+  // One line in the list about the connection, replaced rather than added to each time.
+  var lastNote = null;
+  function statusNote(text, cls) {
+    if (lastNote && lastNote.parentNode === chatBox) chatBox.removeChild(lastNote);
+    chatNote(text, cls);
+    lastNote = chatBox.lastChild;
+  }
+
+  function stopRetry() {
+    clearTimeout(retry.timer);
+    clearInterval(retry.tick);
+    clearTimeout(retry.stable);
+    retry.timer = retry.tick = retry.stable = 0;
+  }
+
+  // Close the current socket without its close event being taken for the room's doing.
+  function dropSocket() {
+    socketGen++;
+    if (ws && ws.readyState < 2) {
+      try {
+        ws.close(1000, "reconnecting");
+      } catch {}
+    }
+    ws = null;
+  }
+
+  function setWho(text) {
+    $("#who").textContent = text;
+    $("#who").title = text;
+  }
+
+  function showWaiting() {
+    var left = Math.ceil((retry.at - Date.now()) / 1000);
+    setWho(left > 0 ? "Reconnecting in " + fmtWait(left) + "…" : "Reconnecting…");
+  }
+
+  // Reconnect after the backoff (and at least minWait ms). The button stays as "retry now".
+  function scheduleReconnect(minWait) {
+    stopRetry();
+    var gen = ++socketGen;
+    var wait = Math.max(RECONNECT.delay(retry.attempt, Math.random()), minWait || 0);
+    retry.attempt++;
+    retry.at = Date.now() + wait;
+    chatState("warn", "Retrying", "tri");
+    $("#ws-reconnect").textContent = "Retry now";
+    $("#ws-reconnect").hidden = false;
+    showWaiting();
+    if (!chatBox.children.length) statusNote("The room is not answering. This page keeps trying by itself.");
+    retry.tick = setInterval(showWaiting, 500);
+    retry.timer = setTimeout(function () {
+      if (gen === socketGen) connectChat();
+    }, wait);
+  }
+
+  // The room closed the socket on purpose (or refused it): say so and stop. The button starts over.
+  function giveUp(label, why) {
+    stopRetry();
+    retry.final = true;
+    chatState("bad", label, "tri");
+    setWho(why);
+    $("#ws-reconnect").textContent = "Reconnect";
+    $("#ws-reconnect").hidden = false;
+    statusNote(why + " Reconnect when you are ready.", "warn");
+    chatEnd();
+  }
+
+  function connectChat() {
+    stopRetry();
+    dropSocket();
+    var gen = socketGen;
+    retry.final = false;
+    $("#ws-reconnect").disabled = false;
+    wsOpened = false;
+    // The list is left as it is: the room sends its history when the socket opens, and that replaces it.
+    $("#ws-reconnect").textContent = retry.attempt ? "Retry now" : "Reconnect";
+    $("#ws-reconnect").hidden = !retry.attempt;
+    chatState("", retry.attempt ? "Reconnecting" : "Connecting", "ring");
+    if (retry.attempt) setWho("Reconnecting…");
+    var started = performance.now();
+    var url = (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/api/chat";
+    var socket;
+    try {
+      socket = new WebSocket(url);
+    } catch (e) {
+      chatState("bad", "Unavailable", "tri");
+      chatNote("This browser could not create the WebSocket: " + e.message, "bad");
+      return;
+    }
+    ws = socket;
+    socket.addEventListener("open", function () {
+      if (gen !== socketGen) return;
+      wsOpened = true;
+      chatState("ok", "Open", "live");
+      $("#ws-reconnect").hidden = true;
+      logLine("GET", "/api/chat", 101, null, false);
+      $("#frame").textContent =
+        (retry.attempt ? "Reconnected" : "Connected") +
+        " in " +
+        fmtMs(performance.now() - started) +
+        " ms (round trip, including the upgrade)";
+      socket.send(JSON.stringify({ type: "hello", name: myName }));
+      // Open for long enough and the next loss starts the backoff over; a socket that drops sooner does not.
+      retry.stable = setTimeout(function () {
+        retry.attempt = 0;
+      }, RECONNECT.STABLE);
+    });
+    socket.addEventListener("message", function (event) {
+      if (gen !== socketGen) return;
+      var msg;
+      try {
+        msg = JSON.parse(event.data);
+      } catch {
+        return;
+      }
+      if (msg.type === "history") {
+        // The whole room as it is now, so what was missed while away is back and nothing is shown twice.
+        clear(chatBox);
+        chatCount = 0;
+        msg.messages.forEach(appendBubble);
+        chatEnd();
+        if (!msg.messages.length) chatNote("No messages yet. Say something.");
+      } else if (msg.type === "presence") {
+        renderPresence(msg);
+      } else if (msg.type === "error") {
+        // The room refused a frame: too fast, too long. Say so on the tile.
+        var f = $("#frame");
+        f.textContent =
+          (msg.code === "rate_limited" ? "Slow down: " : "") + String(msg.error || "").replace(/^slow down: /, "");
+        f.title = f.textContent;
+        f.classList.add("warn");
+        if (lastText && !$("#chat-in").value) {
+          $("#chat-in").value = lastText;
+          chatInputChanged();
+        }
+        lastText = "";
+        clearTimeout(connectChat.warnTimer);
+        connectChat.warnTimer = setTimeout(function () {
+          f.classList.remove("warn");
+        }, 4000);
+      } else if (msg.type === "msg") {
+        addBubble(msg);
+        lat("do", msg.ms);
+        if (msg.name === myName && msg.sent) {
+          $("#frame").textContent =
+            "Round trip " + fmtMs(Date.now() - msg.sent) + " ms · the room handled it in " + fmtMs(msg.ms) + " ms";
+        }
+      }
+    });
+    socket.addEventListener("close", function (event) {
+      if (gen !== socketGen) return;
+      clearTimeout(retry.stable);
+      ws = null;
+      $("#ws-reconnect").hidden = false;
+      if (wsOpened) {
+        if (RECONNECT.isFinal(event.code)) {
+          var reason = event.reason && event.reason !== "bye" ? event.reason : "";
+          giveUp(
+            "Closed",
+            "The room closed this connection" + (reason ? ": " + reason : " (code " + event.code + ")") + ".",
+          );
+        } else {
+          scheduleReconnect(0);
+        }
+      } else {
+        explainRefusal(gen);
+      }
+    });
+  }
+
+  // A browser does not say why a WebSocket upgrade failed, so ask the route over plain HTTP, which the room
+  // answers with the same limits: 503 the room is full (do not go back), 429 a limit that passes (go back
+  // after the wait it names), anything else the network or the server being away (go back after the backoff).
+  async function explainRefusal(gen) {
+    chatState("warn", "Retrying", "tri");
+    setWho("Reconnecting…");
+    var status = 0;
+    var wait = "";
+    var message = "";
+    var abort = new AbortController();
+    var cut = setTimeout(function () {
+      abort.abort();
+    }, 4000);
+    try {
+      var res = await fetch("/api/chat?probe=1", { signal: abort.signal });
+      status = res.status;
+      wait = res.headers.get("retry-after") || "";
+      if (status === 429 || status === 503) {
+        var data = await res.json().catch(function () {
+          return null;
+        });
+        if (data) {
+          message = String(data.error || "");
+          if (!wait && data.retry_after) wait = String(data.retry_after);
+          if (!wait && data.resetAt) wait = String(Math.ceil((data.resetAt - Date.now()) / 1000));
+        }
+      }
+    } catch {}
+    clearTimeout(cut);
+    if (gen !== socketGen) return;
+    var next = RECONNECT.afterRefusal(status, wait);
+    if (!next.retry) {
+      giveUp(
+        "Refused",
+        message ? message.charAt(0).toUpperCase() + message.slice(1) + "." : "The room refused the connection.",
+      );
+      return;
+    }
+    if (status === 429 && message) $("#frame").textContent = message;
+    scheduleReconnect(next.minWait);
+  }
+
+  // "Retry now" and "Reconnect": go now, backoff starts over.
+  $("#ws-reconnect").addEventListener("click", function () {
+    retry.attempt = 0;
+    connectChat();
+  });
+
+  // The page is back (the tab was hidden, the laptop slept) or the network is: go now rather than at the
+  // end of the timer. Not after the room refused this page on purpose, and never over a live socket.
+  function retryNow() {
+    if (!info || !info.bindings.durable_object) return;
+    if (retry.final || stopped) return;
+    if (ws && ws.readyState < 2) return;
+    if (!chatStarted) return;
+    retry.attempt = 0;
+    connectChat();
+  }
+  var stopped = false;
+  var chatStarted = false;
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible") retryNow();
+  });
+  window.addEventListener("online", retryNow);
+  // A page going into the back/forward cache must not keep a socket (or a timer) behind.
+  window.addEventListener("pagehide", function (event) {
+    if (!event.persisted) return;
+    stopped = true;
+    stopRetry();
+    dropSocket();
+  });
+  window.addEventListener("pageshow", function (event) {
+    if (!event.persisted) return;
+    stopped = false;
+    retryNow();
+  });
+
+  // The message box: grows with what is typed (to five lines, then scrolls inside), counts characters the way
+  // the room does (a pair of UTF-16 units is one), and shows the count only near the limit.
+  var CHAT_MAX = 1000;
+  var COUNT_FROM = 900;
+  var chatInput = $("#chat-in");
+  var coarse = window.matchMedia && window.matchMedia("(pointer: coarse)");
+
+  function chars(text) {
+    var n = 0;
+    for (var i = 0; i < text.length; i++) {
+      var c = text.charCodeAt(i);
+      if (c < 0xdc00 || c > 0xdfff) n++;
+    }
+    return n;
+  }
+
+  function chatInputChanged() {
+    chatInput.style.height = "auto";
+    chatInput.style.height = chatInput.scrollHeight + "px";
+    var n = chars(chatInput.value.trim());
+    var row = $("#chat-frame");
+    var over = n > CHAT_MAX;
+    row.classList.toggle("counting", n >= COUNT_FROM);
+    $("#chat-count").textContent = n >= COUNT_FROM ? n + " / " + CHAT_MAX : "";
+    $("#chat-count").classList.toggle("over", over);
+    $("#chat-send").disabled = over;
+    chatInput.setAttribute("aria-invalid", over ? "true" : "false");
+  }
+  chatInput.addEventListener("input", chatInputChanged);
+  chatInput.addEventListener("keydown", function (event) {
+    // Enter sends and Shift+Enter makes a new line. A phone's Enter is a new line and the button sends; and
+    // Enter that confirms an input method's composition (CJK, accents) is not a send.
+    if (event.key !== "Enter" || event.shiftKey || event.isComposing || event.keyCode === 229) return;
+    if (coarse && coarse.matches) return;
+    event.preventDefault();
+    $("#chat-form").requestSubmit();
+  });
+
+  $("#chat-form").addEventListener("submit", function (event) {
+    event.preventDefault();
+    var text = chatInput.value.trim();
+    if (!text) return;
+    if (chars(text) > CHAT_MAX) {
+      $("#frame").textContent = "That message is too long: " + CHAT_MAX + " characters at most";
+      return;
+    }
+    if (!ws || ws.readyState !== 1) {
+      $("#frame").textContent = retry.final
+        ? "Not connected. Use Reconnect."
+        : "Not connected, reconnecting. Your message is kept; send it again when it is back.";
+      return;
+    }
+    // `sent` is echoed back by the room so this page can time the round trip.
+    ws.send(JSON.stringify({ type: "msg", text: text, sent: Date.now() }));
+    lastText = text;
+    chatInput.value = "";
+    chatInputChanged();
+  });
+
+  // ---- Queue and cron feed -------------------------------------------------------------
+  var skew = 0;
+  var seenEvents = {};
+  var cronEveryMin = null;
+  var lastCronAt = null;
+  var lastQueue = null;
+
+  function renderQueue(data) {
+    lastQueue = data;
+    skew = data.now - Date.now();
+    var c = data.counts || {};
+    var queued = Number(c.queued || 0);
+    var processed = Number(c.processed || 0);
+    $("#qd").textContent = fmtCount(Math.max(0, queued - processed));
+    $("#qp").textContent = fmtCount(processed);
+    $("#qc").textContent = fmtCount(c.crons || 0);
+    var ul = $("#jobs");
+    clear(ul);
+    if (!data.recent.length) ul.appendChild(el("li", "empty", "Nothing yet. Enqueue a job or wait for the cron run."));
+    data.recent.forEach(function (ev) {
+      var key = ev.kind + ev.at;
+      var li = el("li", seenEvents[key] === undefined && Object.keys(seenEvents).length ? "fresh" : "");
+      seenEvents[key] = true;
+      li.title = new Date(ev.at).toLocaleTimeString();
+      var cron = ev.kind === "cron";
+      var b = el("span", "badge " + (cron ? "info" : "ok"));
+      b.appendChild(el("span", "shape " + (cron ? "square" : "circle")));
+      b.appendChild(document.createTextNode(cron ? "Cron" : "Done"));
+      li.appendChild(b);
+      var jt = el("span", "jt", (cron ? "cron " : "job ") + ev.label);
+      jt.title = (cron ? "cron " : "job ") + ev.label;
+      jt.dir = "auto";
+      li.appendChild(jt);
+      li.appendChild(el("span", "jm", fmtMs(ev.ms) + " ms · " + ago(ev.at)));
+      ul.appendChild(li);
+    });
+    var lastCron = data.recent.filter(function (e) {
+      return e.kind === "cron";
+    })[0];
+    lastCronAt = lastCron ? new Date(lastCron.at).getTime() : null;
+    var out = $("#cron-last");
+    clear(out);
+    if (lastCron) {
+      var cb = el("span", "badge ok");
+      cb.appendChild(el("span", "shape circle"));
+      cb.appendChild(document.createTextNode("Last cron " + fmtMs(lastCron.ms) + " ms · " + ago(lastCron.at)));
+      out.appendChild(cb);
+    } else out.textContent = "No cron run yet";
+  }
+
+  async function queueLoad(user) {
+    try {
+      var res = await api("/api/queue", { user: user });
+      if (!res.ok) throw new Error((res.data && res.data.error) || "status " + res.status);
+      renderQueue(res.data);
+      if (user) lat("q", res.ms);
+      return res.data;
+    } catch {
+      return null;
+    }
+  }
+
+  $("#q-form").addEventListener("submit", async function (event) {
+    event.preventDefault();
+    var btn = $("#q-b");
+    btn.disabled = true;
+    try {
+      var res = await api("/api/queue/enqueue", { method: "POST", json: { label: $("#q-label").value }, user: true });
+      checked(res);
+      setHelp("#q-help", "");
+      renderQueue(res.data);
+      lat("q", res.ms);
+      // The consumer runs after the response: poll until it has delivered the job.
+      var tries = 0;
+      var timer = setInterval(async function () {
+        tries++;
+        var data = await queueLoad(false);
+        var waiting = data ? Number(data.counts.queued || 0) - Number(data.counts.processed || 0) : 0;
+        if (tries >= 12 || waiting <= 0) clearInterval(timer);
+      }, 700);
+    } catch (e) {
+      fail("#q-help", "Could not enqueue: ", e, [btn]);
+    } finally {
+      release(btn);
+    }
+  });
+
+  var polls = 0;
+  setInterval(function () {
+    if (document.hidden) return;
+    queueLoad(false);
+    // The request count moves with every visitor, so refresh it now and then.
+    if (++polls % 3 === 0)
+      api("/api/info").then(function (res) {
+        if (res.ok && res.data.requests !== null) $("#m-req").textContent = fmtCount(res.data.requests);
+      });
+  }, 5000);
+
+  // Cron countdown, for expressions of the form */N * * * *.
+  function tickCron() {
+    var fill = $("#cdfill");
+    if (!cronEveryMin) {
+      $("#cd").textContent = "–";
+      fill.style.width = "0%";
+      return;
+    }
+    var period = cronEveryMin * 60000;
+    var now = Date.now() + skew;
+    // Count from the last run seen: the broker, sproutd and a standalone binary do not all fire on the minute.
+    var next = lastCronAt
+      ? lastCronAt + Math.ceil((now + 1 - lastCronAt) / period) * period
+      : Math.ceil((now + 1) / period) * period;
+    var left = next - now;
+    var s = Math.ceil(left / 1000);
+    $("#cd").textContent = String(Math.floor(s / 60)).padStart(2, "0") + ":" + String(s % 60).padStart(2, "0");
+    fill.style.width = (100 * (1 - left / period)).toFixed(1) + "%";
+    $("#cdbar").setAttribute("aria-valuenow", String(Math.round((period - left) / 1000)));
+    if (left < 1100 && lastQueue && !tickCron.pending) {
+      tickCron.pending = setTimeout(function () {
+        tickCron.pending = null;
+        queueLoad(false);
+      }, 2500);
+    }
+  }
+  setInterval(tickCron, 1000);
+
+  // ---- Service binding -----------------------------------------------------------------
+  var calls = 0;
+  $("#qb").addEventListener("click", async function () {
+    var btn = this;
+    btn.disabled = true;
+    var qt = $("#qt");
+    var res$ = $("#qres");
+    try {
+      var res = await api("/api/quote", { user: true });
+      if (res.status === 429) {
+        qt.className = "quoteb";
+        qt.textContent = "";
+        var slow = el("div", "state slow");
+        slow.appendChild(el("b", "", "Slow down"));
+        slow.appendChild(
+          el("span", "", "Too many calls from your address. Try again in " + (res.retryAfter || 5) + " s."),
+        );
+        qt.appendChild(slow);
+        clear(res$);
+        res$.appendChild(el("span", "muted", "429 · rate limited"));
+        throttled("#svc-wait", [btn], res.retryAfter || 5);
+        return;
+      }
+      calls++;
+      $("#qm").textContent = calls + (calls === 1 ? " call" : " calls");
+      lat("svc", res.ms);
+      clear(res$);
+      qt.className = "quoteb";
+      if (res.data && res.data.ok) {
+        qt.textContent = "“" + res.data.quote.content + "”";
+        qt.title = res.data.quote.content;
+        res$.appendChild(el("span", "by", res.data.quote.author));
+        res$.appendChild(el("span", "muted", "200 · " + fmtMs(res.ms) + " ms"));
+        badge($("#svc-state"), "ok", "Answered", "circle");
+      } else {
+        var reason = res.data && res.data.reason;
+        qt.className = "quoteb";
+        qt.textContent = "";
+        var box = el("div", "state " + (reason === "no-binding" ? "na" : "bad"));
+        box.appendChild(el("b", "", reason === "no-binding" ? "Not in standalone" : "quote-service did not answer"));
+        box.appendChild(el("span", "mono", (res.data && res.data.error) || "status " + res.status));
+        box.appendChild(
+          el(
+            "span",
+            "",
+            reason === "no-binding"
+              ? "This build has no service binding."
+              : "Deploy examples/quote-service first, then redeploy this app.",
+          ),
+        );
+        qt.appendChild(box);
+        badge($("#svc-state"), "bad", "Unreachable", "tri");
+      }
+    } catch (e) {
+      qt.textContent = "The request to this app failed: " + e.message;
+      badge($("#svc-state"), "bad", "Unreachable", "tri");
+    } finally {
+      release(btn);
+    }
+  });
+
+  // ---- Secrets ---------------------------------------------------------------------------
+  async function secretsLoad() {
+    try {
+      var res = await api("/api/secrets");
+      if (!res.ok) throw new Error("status " + res.status);
+      var box = $("#secs");
+      clear(box);
+      res.data.secrets.forEach(function (s) {
+        var row = el("div", "sec-line");
+        row.appendChild(el("span", "mono", s.name));
+        var b = el("span", "badge " + (s.set ? "ok" : "warn"));
+        b.appendChild(el("span", "shape " + (s.set ? "circle" : "tri")));
+        b.appendChild(document.createTextNode(s.set ? "Set" : "Not set"));
+        row.appendChild(b);
+        box.appendChild(row);
+        if (!s.set) {
+          $("#revnote").textContent =
+            "ADMIN_TOKEN has no value here. Set one with sproutboat secrets put ADMIN_TOKEN (or .dev.vars under sproutboat dev).";
+        }
+      });
+      lat("sec", res.ms);
+    } catch (e) {
+      $("#secs").textContent = "Could not read secret status: " + e.message;
+    }
+  }
+
+  $("#sec-form").addEventListener("submit", async function (event) {
+    event.preventDefault();
+    var token = $("#sec-val").value;
+    if (!token) return;
+    var note = $("#revnote");
+    try {
+      var res = await api("/api/secrets/check", { method: "POST", json: { token: token }, user: true });
+      lat("sec", res.ms);
+      if (res.status === 429) {
+        throttled("#revnote", [$("#sec-b")], res.retryAfter || 20);
+        $("#sec-val").value = "";
+        return;
+      }
+      if (res.status >= 400)
+        note.textContent = (res.data && res.data.error) || "The check failed: status " + res.status;
+      else if (res.data && res.data.ok)
+        note.textContent = "Match: the value equals env.ADMIN_TOKEN. It was compared in the worker and not returned.";
+      else note.textContent = "No match. The value does not equal env.ADMIN_TOKEN.";
+    } catch (e) {
+      note.textContent = "The check failed: " + e.message;
+    }
+    $("#sec-val").value = "";
+  });
+
+  // ---- start -------------------------------------------------------------------------------
+  (async function start() {
+    await loadBuild();
+    var m = build && build.crons[0] ? /^\*\/(\d+) \* \* \* \*$/.exec(build.crons[0]) : null;
+    cronEveryMin = m ? parseInt(m[1], 10) : build && build.crons[0] === "* * * * *" ? 1 : null;
+    await loadInfo();
+    if (!info) return;
+    var jobs = [];
+    if (info.bindings.kv) jobs.push(kvLoad(false));
+    if (info.bindings.d1) jobs.push(gbLoad(false));
+    if (info.bindings.r2) jobs.push(r2Load(false));
+    jobs.push(queueLoad(false));
+    jobs.push(secretsLoad());
+    await Promise.all(jobs);
+    if (info.bindings.durable_object) {
+      chatStarted = true;
+      connectChat();
+    } else notAvailable("#t-do", "Not in this build", "This build has no Durable Object binding.");
+    tickCron();
+  })();
+})();

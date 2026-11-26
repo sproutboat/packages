@@ -1,0 +1,13 @@
+{
+  "bindings": [
+    {
+      "name": "NOTES",
+      "kind": "kv",
+      "resource_id": "notes",
+      "config": {}
+    }
+  ],
+  "crons": [],
+  "queue_consumers": [],
+  "warnings": []
+}

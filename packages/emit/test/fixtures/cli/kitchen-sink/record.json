@@ -1,0 +1,107 @@
+{
+  "bindings": [
+    {
+      "name": "SESSIONS",
+      "kind": "kv",
+      "resource_id": "sessions",
+      "config": {}
+    },
+    {
+      "name": "DB",
+      "kind": "d1",
+      "resource_id": "db",
+      "config": {}
+    },
+    {
+      "name": "UPLOADS",
+      "kind": "r2",
+      "resource_id": "uploads",
+      "config": {}
+    },
+    {
+      "name": "EMAILS",
+      "kind": "queue",
+      "resource_id": "emails",
+      "config": {
+        "queue": "EMAILS"
+      }
+    },
+    {
+      "name": "METRICS",
+      "kind": "ae",
+      "resource_id": null,
+      "config": {}
+    },
+    {
+      "name": "ROOM",
+      "kind": "do",
+      "resource_id": null,
+      "config": {
+        "class_name": "ChatRoom"
+      }
+    },
+    {
+      "name": "THROTTLE",
+      "kind": "ratelimit",
+      "resource_id": null,
+      "config": {
+        "limit": 3,
+        "period": 60
+      }
+    },
+    {
+      "name": "WRITES",
+      "kind": "ratelimit",
+      "resource_id": null,
+      "config": {
+        "limit": 30,
+        "period": 60
+      }
+    },
+    {
+      "name": "BULK",
+      "kind": "ratelimit",
+      "resource_id": null,
+      "config": {
+        "limit": 60,
+        "period": 60
+      }
+    },
+    {
+      "name": "READS",
+      "kind": "ratelimit",
+      "resource_id": null,
+      "config": {
+        "limit": 240,
+        "period": 60
+      }
+    },
+    {
+      "name": "ASSETS",
+      "kind": "assets",
+      "resource_id": null,
+      "config": {}
+    },
+    {
+      "name": "ADMIN_TOKEN",
+      "kind": "secret",
+      "resource_id": null,
+      "config": {}
+    }
+  ],
+  "crons": [
+    "*/1 * * * *",
+    "*/15 * * * *",
+    "0 4 * * *"
+  ],
+  "queue_consumers": [
+    {
+      "queue": "emails",
+      "max_batch_size": 10,
+      "max_batch_timeout_ms": 0,
+      "max_retries": 3,
+      "dead_letter_queue": null
+    }
+  ],
+  "warnings": []
+}

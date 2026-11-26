@@ -1,0 +1,31 @@
+{
+  "bindings": [
+    {
+      "name": "JOBS",
+      "kind": "queue",
+      "resource_id": "jobs",
+      "config": {
+        "queue": "jobs"
+      }
+    },
+    {
+      "name": "OTHER",
+      "kind": "queue",
+      "resource_id": "other",
+      "config": {
+        "queue": "other"
+      }
+    }
+  ],
+  "crons": [],
+  "queue_consumers": [
+    {
+      "queue": "other",
+      "max_batch_size": 5,
+      "max_batch_timeout_ms": 0,
+      "max_retries": 3,
+      "dead_letter_queue": null
+    }
+  ],
+  "warnings": []
+}

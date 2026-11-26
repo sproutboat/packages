@@ -1,0 +1,13 @@
+{
+  "bindings": [
+    {
+      "name": "ASSETS",
+      "kind": "assets",
+      "resource_id": null,
+      "config": {}
+    }
+  ],
+  "crons": [],
+  "queue_consumers": [],
+  "warnings": []
+}

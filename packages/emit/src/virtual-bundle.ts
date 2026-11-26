@@ -1,0 +1,426 @@
+/**
+ * Bundle uploaded modules into the one ESM module the compiler takes, without touching a disk. The resolver answers
+ * every specifier itself: an uploaded module, a `cloudflare:*` external, a Node built-in under `nodejs_compat`
+ * (a Sproutboat shim, else the bundler's own polyfill), and otherwise Cloudflare's "No such module".
+ */
+import { builtinModules } from "node:module";
+import { SOCKETS_DATE, maskNonCode } from "@sproutboat/runtime";
+import { EmitError, issue, type EmitIssue } from "./errors";
+import type { NodeFlags } from "./flags";
+import { MAX_BUNDLED_BYTES } from "./limits";
+import { MODULE_TYPES, type ModuleInput } from "./metadata";
+import { NODE_SHIMS, SOCKET_NODE_SHIMS } from "./node-shims";
+import {
+  bundlerIssues,
+  checkCodeModule,
+  importedNames,
+  noSuchModule,
+  scanImports,
+  type SourceKind,
+} from "./source-check";
+
+/** The date a CLI project (which has no flags) gets `process` and `Buffer` for its own code. Cloudflare derives them from flags. */
+export const PROCESS_GLOBAL_DATE = "2026-11-23";
+
+const ENTRY = "sb-entry:";
+/** ES modules. Their paths end in `.mjs`: Bun reads that as Node's ES-module rule, so a default import of a CommonJS module is its `module.exports`, as on Cloudflare and in the CLI. */
+const NS_MODULE = "sb-module";
+/** Every other uploaded module (CommonJS, text, data), under the name it was uploaded with. */
+const NS_FILE = "sb-file";
+const NS_SHIM = "sb-shim";
+const NS_GLOBAL = "sb-global";
+const PROCESS_SPECIFIER = "sb-node-process";
+const EXTERNAL = new Set(["cloudflare:workers", "cloudflare:sockets"]);
+
+/**
+ * Porffor lists the global builtin functions on the global object of every unit, and a function named like one of them
+ * drops the entry from that unit alone, so such an app is rejected at admission. The name is only visible inside the
+ * function, so renaming it is safe unless the body calls itself by that name.
+ */
+const SHADOWED_BUILTIN_FUNCTIONS =
+  /([=(:,?&|]\s*|\breturn\s+)function\s+(escape|unescape|eval|isNaN|isFinite|parseInt|parseFloat|encodeURI|encodeURIComponent|decodeURI|decodeURIComponent)\s*\(/g;
+
+/** Rename in code only: text inside a string, template or comment stays as written. */
+function renameShadowing(source: string): string {
+  const masked = maskNonCode(source);
+  let out = "";
+  let copied = 0;
+  for (const match of masked.matchAll(SHADOWED_BUILTIN_FUNCTIONS)) {
+    const name = match[2]!;
+    const nameAt = masked.indexOf(name, match.index + match[1]!.length);
+    out += `${source.slice(copied, nameAt)}${name}_sb`;
+    copied = nameAt + name.length;
+  }
+  return out + source.slice(copied);
+}
+
+/**
+ * process.env holds the text, JSON and secret bindings, by name, as strings: JSON as compact JSON text (the metadata is
+ * parsed, so the author's spacing is gone), a later write as `String(value)`. No Proxy: an unbound name is a plain property.
+ */
+const populateProcessEnv = (names: readonly string[]) => `
+function bind(name, read) {
+  Object.defineProperty(env, name, {
+    enumerable: true,
+    configurable: true,
+    get: read,
+    set(value) { const text = String(value); bind(name, () => text); },
+  });
+}
+function asText(value) { return typeof value === "string" || value === undefined ? value : JSON.stringify(value); }
+const source = globalThis.env;
+if (source !== undefined && source !== null) {
+  const names = ${JSON.stringify(names)};
+  for (let i = 0; i < names.length; i++) {
+    const name = names[i];
+    const descriptor = Object.getOwnPropertyDescriptor(source, name);
+    if (descriptor === undefined) continue;
+    if (descriptor.get !== undefined) {
+      bind(name, () => { try { return asText(source[name]); } catch (e) { return undefined; } });
+    } else {
+      const text = asText(descriptor.value);
+      bind(name, () => text);
+    }
+  }
+}`;
+
+const processStub = (envNames: readonly string[] | undefined) => `
+const env = {};
+${envNames === undefined ? "" : populateProcessEnv(envNames)}
+function nextTick(fn, ...args) { Promise.resolve().then(() => fn(...args)); }
+const process = { env, platform: "linux", arch: "wasm32", version: "v20.0.0", versions: {}, argv: [], browser: true, nextTick, emitWarning() {}, cwd() { return "/"; }, stderr: { write() {} }, stdout: { write() {} }, on() {}, off() {}, once() {}, emit() {} };
+export default process;
+export { env, nextTick };
+`;
+
+export type BundleInput = {
+  modules: readonly ModuleInput[];
+  mainModule: string;
+  /** The date the build runs as (the declared date, raised to the floor). Not what decides Node support. */
+  compatibilityDate: string;
+  /** Node support, decided from the flags and the DECLARED date (see flags.ts). */
+  node: NodeFlags;
+  /** The bindings `process.env` holds when `node.populateProcessEnv` is on: text, JSON and secret names. */
+  processEnvNames?: readonly string[];
+};
+
+const text = (module: ModuleInput): string => {
+  if (module.content instanceof Uint8Array) return new TextDecoder().decode(module.content);
+  return module.content;
+};
+
+/** The uploaded name a specifier means: `./x` and `../x` from the importer's directory, anything else from the root. */
+function resolveName(specifier: string, importer: string): string | null {
+  const parts = specifier.startsWith("./") || specifier.startsWith("../") ? importer.split("/").slice(0, -1) : [];
+  for (const segment of specifier.split("/")) {
+    if (segment === "." || segment === "") continue;
+    if (segment === "..") {
+      if (parts.pop() === undefined) return null;
+    } else parts.push(segment);
+  }
+  return parts.join("/");
+}
+
+/**
+ * Where each uploaded module lives for the bundler, and back. An ES module's path ends in `.mjs` (a `.js` is swapped for
+ * it, so Bun names the same identifiers as the CLI's bundle does); every other module keeps its own name in the other
+ * namespace. A path is unique across both (Bun reports an importer by its path alone): a clash gets another `.mjs`.
+ */
+class Places {
+  private readonly place = new Map<string, { namespace: string; path: string }>();
+  private readonly module = new Map<string, ModuleInput>();
+
+  constructor(modules: readonly ModuleInput[]) {
+    for (const module of modules)
+      if (module.type !== "esm") this.add(module, { namespace: NS_FILE, path: module.name });
+    for (const module of modules) {
+      if (module.type !== "esm") continue;
+      let path = `${module.name.replace(/\.m?js$/, "")}.mjs`;
+      while (this.module.has(path)) path += ".mjs";
+      this.add(module, { namespace: NS_MODULE, path });
+    }
+  }
+
+  private add(module: ModuleInput, place: { namespace: string; path: string }) {
+    this.place.set(module.name, place);
+    this.module.set(place.path, module);
+  }
+
+  of(module: ModuleInput) {
+    return this.place.get(module.name)!;
+  }
+
+  /** The uploaded module behind a bundler path, if there is one. */
+  at(path: string): ModuleInput | undefined {
+    return this.module.get(path);
+  }
+
+  /** A bundler message that names a file as `sb-module:lib/a.mjs` or `sb-file:x.cjs` names the uploaded module instead. */
+  tidy = (message: string): string =>
+    message.replace(/sb-(?:module|file):([^"\s]*)/g, (all, path: string) => this.at(path)?.name ?? all);
+}
+
+const builtinName = (specifier: string): string | null => {
+  const bare = specifier.startsWith("node:") ? specifier.slice(5) : specifier;
+  return builtinModules.includes(bare) ? bare : null;
+};
+
+/**
+ * Whether a statement names `import` or `require` and, later on the same line or before the next `;`, the word `name`.
+ * Segments are split at `;` and newlines and each is read once, so the cost is linear in the source.
+ */
+function importsName(source: string, name: string): boolean {
+  const word = new RegExp(`\\b${name}\\b`, "g");
+  const importish = /\b(?:import|require)\b/;
+  const breaks = /[;\n]/g;
+  let segmentEnd = -1;
+  let importEnd = -1;
+  for (const match of source.matchAll(word)) {
+    if (match.index >= segmentEnd) {
+      // The search back stops at the end of the previous segment, so each stretch of the source is read once.
+      const gap = source.slice(segmentEnd + 1, match.index);
+      const lastBreak = Math.max(gap.lastIndexOf(";"), gap.lastIndexOf("\n"));
+      const segmentStart = segmentEnd + 1 + lastBreak + 1;
+      breaks.lastIndex = match.index;
+      segmentEnd = breaks.exec(source)?.index ?? source.length;
+      const found = importish.exec(source.slice(segmentStart, segmentEnd));
+      importEnd = found === null ? -1 : segmentStart + found.index + found[0].length;
+    }
+    if (importEnd !== -1 && match.index >= importEnd) return true;
+  }
+  return false;
+}
+
+/** `Buffer`, `process` and `global` as free names: bound to bundled code, as Workers has them under `nodejs_compat`. */
+function bindNodeGlobals(source: string, kind: SourceKind): string {
+  // An ES module's imports are read from its syntax tree (a declaration may span lines); a CommonJS one has `require`.
+  let imported: Set<string> | null | undefined;
+  const names = (name: string): boolean => {
+    if (kind === "esm") imported ??= importedNames(source);
+    return imported ? imported.has(name) : importsName(source, name);
+  };
+  const usesBuffer =
+    /(?:^|[^.\w$])Buffer\s*[.(]/m.test(source) &&
+    !names("Buffer") &&
+    !/(?:const|let|var|function|class)\s+(?:\{\s*)?Buffer\b/.test(source);
+  const usesProcess =
+    /(?:^|[^.\w$])process\s*\./m.test(source) &&
+    !names("process") &&
+    !/(?:const|let|var|function)\s+(?:\{\s*)?process\b/.test(source);
+  const usesGlobal =
+    /(?:^|[^.\w$])global\s*\./m.test(source) && !/(?:const|let|var|function)\s+(?:\{\s*)?global\b/.test(source);
+  if (!usesBuffer && !usesProcess && !usesGlobal) return source;
+  const esm = kind === "esm";
+  let prefix = "";
+  if (usesBuffer)
+    prefix += esm ? `import { Buffer } from "node:buffer";\n` : `var { Buffer } = require("node:buffer");\n`;
+  if (usesProcess)
+    prefix += esm
+      ? `import process from "${PROCESS_SPECIFIER}";\n`
+      : `var process = require("${PROCESS_SPECIFIER}").default;\n`;
+  if (usesGlobal) prefix += "var global = globalThis;\n";
+  return prefix + source;
+}
+
+/** What the CLI's plugin does to each file: rename shadowing function names, and (under `nodejs_compat`) bind free globals. */
+export function prepareModuleSource(
+  source: string,
+  input: Pick<BundleInput, "compatibilityDate" | "node">,
+  kind: SourceKind,
+): string {
+  if (input.compatibilityDate < SOCKETS_DATE) return source;
+  const renamed = renameShadowing(source);
+  if (!input.node.compat) return renamed;
+  return bindNodeGlobals(renamed, kind);
+}
+
+/** Every code module is checked before the bundler (or anything else that parses) sees it: see source-check.ts. */
+export function checkCodeModules(modules: readonly ModuleInput[]): void {
+  for (const module of modules)
+    if (module.type === "esm" || module.type === "cjs") checkCodeModule(module.name, text(module), module.type);
+}
+
+function latin1Module(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return `const s = ${JSON.stringify(binary)};\nconst b = new Uint8Array(s.length);\nfor (let i = 0; i < s.length; i++) b[i] = s.charCodeAt(i);\nexport default b.buffer;\n`;
+}
+
+/** The names a module exports to the outside (the entry's own exports, after bundling). */
+export function exportedNames(source: string): Set<string> {
+  const names = new Set<string>();
+  const code = maskNonCode(source);
+  for (const m of code.matchAll(
+    /\bexport\s+(?:default\s+)?(?:async\s+)?(?:class|function\*?|const|let|var)\s+([A-Za-z_$][\w$]*)/g,
+  ))
+    names.add(m[1]!);
+  for (const m of code.matchAll(/\bexport\s*\{([^{}]*)\}/g))
+    for (const part of m[1]!.split(",")) {
+      const exported = part
+        .trim()
+        .split(/\s+as\s+/)
+        .at(-1)
+        ?.trim();
+      if (exported) names.add(exported);
+    }
+  return names;
+}
+
+/** What Bun.build's own options say beyond its typings: `macros: false` makes a macro import fail with "Macros are disabled". */
+type BuildConfig = Parameters<typeof Bun.build>[0] & { macros: false };
+
+/**
+ * The one Bun.build configuration the emitter uses (a test builds a macro through this very object). `macros: false` is
+ * what stops a macro import that got past the source checks: Bun runs a macro in this process while it parses.
+ */
+export function bundlerConfig(entrypoint: string, plugins: Bun.BunPlugin[]): BuildConfig {
+  return {
+    entrypoints: [entrypoint],
+    target: "browser",
+    format: "esm",
+    minify: false,
+    splitting: false,
+    sourcemap: "none",
+    external: [...EXTERNAL],
+    macros: false,
+    plugins,
+  };
+}
+
+/** Bytes, in UTF-8, as every cap of this package counts them. */
+export const byteLength = (value: string): number => Buffer.byteLength(value, "utf8");
+
+/** Refuse a bundle over MAX_BUNDLED_BYTES. */
+export function checkBundledSize(bundled: string): void {
+  const bytes = byteLength(bundled);
+  if (bytes > MAX_BUNDLED_BYTES)
+    throw new EmitError([
+      issue("limit-exceeded", `the bundled module is ${bytes} bytes; at most ${MAX_BUNDLED_BYTES}`, "modules"),
+    ]);
+}
+
+function bundleIssuesOf(causes: readonly unknown[], mainModule: string, places: Places): EmitIssue[] {
+  return causes.flatMap((cause): EmitIssue[] => {
+    if (cause instanceof EmitError) return cause.issues;
+    const message = places.tidy(
+      cause instanceof Error || cause instanceof BuildMessage ? cause.message : String(cause),
+    );
+    // The bundler hands a plugin's error on as a plain Error with the same message.
+    if (message.startsWith("No such module")) return [issue("no-such-module", message)];
+    if (message === "Macros are disabled")
+      return [
+        issue(
+          "import-attribute-refused",
+          "a module uses an import attribute that makes the bundler run code (type: macro); uploads accept none",
+        ),
+      ];
+    return bundlerIssues(
+      [cause],
+      mainModule,
+      (file) => places.at(file.replace(/^sb-(?:module|file):/, ""))?.name ?? file,
+      "bundler",
+      places.tidy,
+    );
+  });
+}
+
+/** Bundle the upload into one ESM module. A single self-contained module passes through, only prepared (no re-print). */
+export async function bundleModules(input: BundleInput): Promise<string> {
+  checkCodeModules(input.modules);
+  const byName = new Map(input.modules.map((module) => [module.name, module]));
+  const places = new Places(input.modules);
+  const main = byName.get(input.mainModule);
+  if (main === undefined || main.type !== "esm")
+    throw new EmitError([issue("module-missing", `main_module "${input.mainModule}" is not an uploaded ES module`)]);
+  const compat = input.node.compat;
+  // `nodejs_als` alone brings AsyncLocalStorage and nothing else of Node.
+  const alsOnly = input.node.als;
+  const sockets = input.compatibilityDate >= SOCKETS_DATE;
+
+  const mainText = text(main);
+  const prepared = prepareModuleSource(mainText, input, "esm");
+  if (scanImports(main.name, prepared).every((entry) => EXTERNAL.has(entry.path))) return prepared;
+
+  const shims: Map<string, string> = new Map(Object.entries(NODE_SHIMS));
+  if (sockets) for (const [name, shim] of Object.entries(SOCKET_NODE_SHIMS)) shims.set(name, shim);
+  const globalsUsed = compat && sockets;
+
+  const config = bundlerConfig(`${ENTRY}${input.mainModule}`, [
+    {
+      name: "sproutboat-virtual-modules",
+      setup(build) {
+        build.onResolve({ filter: /.*/ }, (args) => {
+          const specifier = args.path;
+          if (args.importer === "" && specifier.startsWith(ENTRY)) return places.of(main);
+          const importer = places.at(args.importer)?.name ?? args.importer;
+          if (EXTERNAL.has(specifier)) return { path: specifier, external: true };
+          // The free `process` and `import process from "node:process"` are one object, as they are on Workers.
+          if (globalsUsed && (specifier === PROCESS_SPECIFIER || builtinName(specifier) === "process"))
+            return { path: PROCESS_SPECIFIER, namespace: NS_GLOBAL };
+          const name = resolveName(specifier, importer);
+          const uploaded = name === null ? undefined : byName.get(name);
+          if (uploaded !== undefined) {
+            if (uploaded.type === "sourcemap") throw noSuchModule(specifier, importer);
+            return places.of(uploaded);
+          }
+          if (alsOnly && (specifier === "node:async_hooks" || specifier === "async_hooks"))
+            return { path: "node:async_hooks", namespace: NS_SHIM };
+          if (compat && builtinName(specifier) !== null) {
+            const shim = shims.get(specifier);
+            if (shim !== undefined) return { path: specifier, namespace: NS_SHIM };
+            // Bun's own polyfill of the built-in; nothing on a disk is read.
+            return undefined;
+          }
+          throw noSuchModule(specifier, importer);
+        });
+        build.onLoad({ filter: /.*/, namespace: NS_SHIM }, (args) => ({
+          contents: shims.get(args.path) ?? "",
+          loader: "js",
+        }));
+        build.onLoad({ filter: /.*/, namespace: NS_GLOBAL }, () => ({
+          contents: processStub(input.node.populateProcessEnv ? (input.processEnvNames ?? []) : undefined),
+          loader: "js",
+        }));
+        const load = (args: { path: string }, namespace: string) => {
+          const module = places.at(args.path);
+          if (
+            module === undefined ||
+            !MODULE_TYPES.some((type) => type === module.type) ||
+            places.of(module).namespace !== namespace
+          )
+            throw noSuchModule(args.path, "");
+          if (module.type === "text")
+            return { contents: `export default ${JSON.stringify(text(module))};\n`, loader: "js" as const };
+          if (module.type === "data") {
+            const bytes =
+              module.content instanceof Uint8Array ? module.content : new TextEncoder().encode(module.content);
+            return { contents: latin1Module(bytes), loader: "js" as const };
+          }
+          // A sourcemap never reaches a loader: the resolver refuses it.
+          if (module.type === "sourcemap") throw noSuchModule(module.name, "");
+          const original = text(module);
+          const contents = prepareModuleSource(original, input, module.type);
+          // The checks ran on the upload; what the bundler is handed is checked again where it differs.
+          if (contents !== original) checkCodeModule(module.name, contents, module.type);
+          return { contents, loader: "js" as const };
+        };
+        build.onLoad({ filter: /.*/, namespace: NS_MODULE }, (args) => load(args, NS_MODULE));
+        build.onLoad({ filter: /.*/, namespace: NS_FILE }, (args) => load(args, NS_FILE));
+      },
+    },
+  ]);
+  let built: Awaited<ReturnType<typeof Bun.build>>;
+  try {
+    built = await Bun.build(config);
+  } catch (cause) {
+    throw new EmitError(
+      bundleIssuesOf(cause instanceof AggregateError ? cause.errors : [cause], input.mainModule, places),
+    );
+  }
+  if (!built.success) throw new EmitError(bundleIssuesOf(built.logs, input.mainModule, places));
+  const [output] = built.outputs;
+  if (output === undefined) throw new EmitError([issue("bundle-failed", "the bundler produced no output")]);
+  const bundled = await output.text();
+  checkBundledSize(bundled);
+  return bundled;
+}

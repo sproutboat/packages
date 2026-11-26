@@ -1,0 +1,12 @@
+{
+  "name": "service-bindings-caller",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-11-18",
+  "$schema": "https://sproutboat.com/schema.json",
+  "services": [
+    {
+      "binding": "GREETER",
+      "service": "service-bindings-callee"
+    }
+  ]
+}

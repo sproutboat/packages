@@ -1,0 +1,15 @@
+{
+  "bindings": [
+    {
+      "name": "STATE",
+      "kind": "kv",
+      "resource_id": "state",
+      "config": {}
+    }
+  ],
+  "crons": [
+    "*/1 * * * *"
+  ],
+  "queue_consumers": [],
+  "warnings": []
+}
