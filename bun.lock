@@ -21,26 +21,34 @@
     },
     "packages/assets": {
       "name": "@sproutboat/assets",
-      "version": "0.3.0",
+      "version": "0.4.0",
     },
     "packages/config": {
       "name": "@sproutboat/config",
-      "version": "0.6.0",
+      "version": "0.7.0",
+    },
+    "packages/emit": {
+      "name": "@sproutboat/emit",
+      "version": "0.0.0",
+      "dependencies": {
+        "@sproutboat/config": "^0.7.0",
+        "@sproutboat/runtime": "^0.50.0",
+      },
     },
     "packages/runtime": {
       "name": "@sproutboat/runtime",
-      "version": "0.45.0",
+      "version": "0.50.0",
     },
     "packages/toolchain": {
       "name": "@sproutboat/toolchain",
-      "version": "0.26.1",
+      "version": "0.29.1",
     },
     "packages/wire": {
       "name": "@sproutboat/wire",
-      "version": "0.22.5",
+      "version": "0.23.1",
       "dependencies": {
-        "@sproutboat/assets": "^0.3.0",
-        "@sproutboat/runtime": "^0.45.0",
+        "@sproutboat/assets": "^0.4.0",
+        "@sproutboat/runtime": "^0.50.0",
       },
     },
   },
@@ -170,6 +178,8 @@
     "@sproutboat/assets": ["@sproutboat/assets@workspace:packages/assets"],
 
     "@sproutboat/config": ["@sproutboat/config@workspace:packages/config"],
+
+    "@sproutboat/emit": ["@sproutboat/emit@workspace:packages/emit"],
 
     "@sproutboat/runtime": ["@sproutboat/runtime@workspace:packages/runtime"],
 
