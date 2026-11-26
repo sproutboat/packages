@@ -65,14 +65,18 @@ describe("Node support is decided from the declared date, never from the floored
     expect(result.bundled).not.toMatch(/^import .*node:/m);
   });
 
-  const reads = `export default { fetch() { return new Response(String(process.env.A) + "|" + JSON.stringify(process.env.CFG) + "|" + String(process.env.S) + "|" + String(process.env.NOPE)); } };`;
+  // Cloudflare: a JSON binding that is not a string is the raw JSON string in process.env; a JSON string is exposed parsed.
+  const reads = `export default { fetch() { const raw = process.env.CFG; return new Response([process.env.A, typeof raw, raw, raw === undefined ? undefined : JSON.parse(raw).x[1], process.env.N, process.env.Q, process.env.S, process.env.NOPE].map(String).join("|")); } };`;
+  const expectedBody = 'a|string|{"x":[1,2]}|2|42|quoted|secret!|undefined';
   const bindings = [
     { type: "plain_text", name: "A", text: "a" },
     { type: "json", name: "CFG", json: { x: [1, 2] } },
+    { type: "json", name: "N", json: 42 },
+    { type: "json", name: "Q", json: "quoted" },
     { type: "secret_text", name: "S" },
   ];
   const env = () => {
-    const value = { A: "a", CFG: { x: [1, 2] }, NOPE: "not a text binding" };
+    const value = { A: "a", CFG: { x: [1, 2] }, N: 42, Q: "quoted", NOPE: "not a text binding" };
     Object.defineProperty(value, "S", { get: () => "secret!", enumerable: true });
     return value;
   };
@@ -81,7 +85,13 @@ describe("Node support is decided from the declared date, never from the floored
     const result = await cloud([esm("index.js", reads)], meta({ bindings }));
     expect(result.metadata.node).toEqual({ compat: true, als: false, populateProcessEnv: true });
     const answer = await runBundle(result.bundled, env());
-    expect(answer.body).toBe('a|{"x":[1,2]}|secret!|undefined');
+    expect(answer.body).toBe(expectedBody);
+  });
+
+  test("a value written to a bound name is stored as a string, as on Cloudflare (a name nothing binds is a plain property)", async () => {
+    const writes = `export default { fetch() { process.env.A = 5; process.env.CFG = { y: 1 }; process.env.A = process.env.A + 1; process.env.EXTRA = 7; return new Response([typeof process.env.A, process.env.A, process.env.CFG, typeof process.env.EXTRA].join("|")); } };`;
+    const result = await cloud([esm("index.js", writes)], meta({ bindings }));
+    expect((await runBundle(result.bundled, env())).body).toBe("string|51|[object Object]|number");
   });
 
   test("import process from node:process is the same object as the free process", async () => {
@@ -100,19 +110,23 @@ describe("Node support is decided from the declared date, never from the floored
         bindings,
       }),
     );
-    expect((await runBundle(on.bundled, env())).body).toBe('a|{"x":[1,2]}|secret!|undefined');
+    expect((await runBundle(on.bundled, env())).body).toBe(expectedBody);
     // Before 2025-04-01 the default is off, as on Cloudflare.
     const off = await cloud(
       modules,
       meta({ compatibility_date: "2025-03-31", compatibility_flags: ["nodejs_compat"], bindings }),
     );
-    expect((await runBundle(off.bundled, env())).body).toBe("undefined|undefined|undefined|undefined");
+    expect((await runBundle(off.bundled, env())).body).toBe(
+      "undefined|undefined|undefined|undefined|undefined|undefined|undefined|undefined",
+    );
     const optedOut = await cloud(
       modules,
       meta({ compatibility_flags: ["nodejs_compat_do_not_populate_process_env"], bindings }),
     );
     expect(optedOut.metadata.node.populateProcessEnv).toBe(false);
-    expect((await runBundle(optedOut.bundled, env())).body).toBe("undefined|undefined|undefined|undefined");
+    expect((await runBundle(optedOut.bundled, env())).body).toBe(
+      "undefined|undefined|undefined|undefined|undefined|undefined|undefined|undefined",
+    );
   });
 
   test("the date table of flags.ts", () => {

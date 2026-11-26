@@ -23,8 +23,7 @@ import {
   stripSecretValues,
   type WorkerMetadata,
 } from "./metadata";
-import { MAX_BUNDLED_BYTES } from "./limits";
-import { bundleModules, exportedNames } from "./virtual-bundle";
+import { bundleModules, checkBundledSize, exportedNames } from "./virtual-bundle";
 
 /** Where the Cloud's own region starts: sproutd cuts a generated file here and at the last `export default {`. */
 export const REGION_MARKER = "globalThis.__sbCompat = ";
@@ -138,10 +137,7 @@ async function emitChecked(
       ...(bindings.versionMetadata === undefined ? [] : [bindings.versionMetadata]),
     ],
   });
-  if (bundled.length > MAX_BUNDLED_BYTES)
-    throw new EmitError([
-      issue("limit-exceeded", `the module is ${bundled.length} bytes; at most ${MAX_BUNDLED_BYTES}`, "modules"),
-    ]);
+  checkBundledSize(bundled);
   checkCapabilities(bundled, metadata.compatibility_date);
 
   const exported = neutraliseExportsDetailed(bundled);

@@ -1,17 +1,17 @@
-// sb-module:data/config.js
+// sb-module:data/config.mjs
 var config_default = { greeting: "hello", factor: 3, tags: ["a", "b"] };
 
-// sb-module:lib/greet.js
+// sb-module:lib/greet.mjs
 var greet = (name) => `${config_default.greeting}, ${name}!`;
 
-// sb-module:lib/math.js
+// sb-module:lib/math.mjs
 function sum(...values) {
   return values.reduce((total, value) => total + value, 0);
 }
 var scale = (value) => value * config_default.factor;
 var PI2 = Math.PI * 2;
 
-// sb-module:lib/counter.js
+// sb-module:lib/counter.mjs
 class Counter {
   value = 0;
   next() {
@@ -20,7 +20,7 @@ class Counter {
   }
 }
 
-// sb-module:index.js
+// sb-module:index.mjs
 var index_default = {
   async fetch(request, env) {
     const url = new URL(request.url);

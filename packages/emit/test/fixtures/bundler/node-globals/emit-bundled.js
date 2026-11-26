@@ -1990,6 +1990,20 @@ Object.assign(EventEmitter, { once, getEventListeners, getMaxListeners, setMaxLi
 
 // sb-global:sb-node-process
 var env = {};
+function bind(name, read) {
+  Object.defineProperty(env, name, {
+    enumerable: true,
+    configurable: true,
+    get: read,
+    set(value) {
+      const text = String(value);
+      bind(name, () => text);
+    }
+  });
+}
+function asText(value) {
+  return typeof value === "string" || value === undefined ? value : JSON.stringify(value);
+}
 var source = globalThis.env;
 if (source !== undefined && source !== null) {
   const names = ["MODE"];
@@ -1999,22 +2013,16 @@ if (source !== undefined && source !== null) {
     if (descriptor === undefined)
       continue;
     if (descriptor.get !== undefined) {
-      Object.defineProperty(env, name, {
-        enumerable: true,
-        configurable: true,
-        get() {
-          try {
-            return source[name];
-          } catch (e) {
-            return;
-          }
-        },
-        set(value) {
-          Object.defineProperty(env, name, { value, writable: true, enumerable: true, configurable: true });
+      bind(name, () => {
+        try {
+          return asText(source[name]);
+        } catch (e) {
+          return;
         }
       });
     } else {
-      env[name] = descriptor.value;
+      const text = asText(descriptor.value);
+      bind(name, () => text);
     }
   }
 }
@@ -2026,14 +2034,14 @@ var process = { env, platform: "linux", arch: "wasm32", version: "v20.0.0", vers
 }, stderr: { write() {} }, stdout: { write() {} }, on() {}, off() {}, once() {}, emit() {} };
 var sb_node_process_default = process;
 
-// sb-module:lib/helper.js
+// sb-module:lib/helper.mjs
 var global = globalThis;
 function describe() {
   const encoded = Buffer.from("free buffer").toString("base64");
   return `${encoded}|${sb_node_process_default.env.MODE}|${typeof global.setTimeout}`;
 }
 
-// sb-module:index.js
+// sb-module:index.mjs
 var index_default = {
   async fetch(request) {
     const url = new URL(request.url);

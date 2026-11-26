@@ -2,6 +2,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
 import { EmitError, emitLocal, type EmitReason, type ModuleInput } from "./index";
+import { checkCodeModule } from "./source-check";
+import { bundlerConfig } from "./virtual-bundle";
 
 const HANDLER = `export default { fetch() { return new Response("ok"); } };`;
 const esm = (name: string, content: string): ModuleInput => ({ name, type: "esm", content });
@@ -23,7 +25,8 @@ const FS = `import { writeFileSync } from "node:fs"`;
 
 describe("a Bun macro never runs, however the source is written (B1)", () => {
   // Each of these fooled the regex over masked text, or would fool a tokenizer that guesses at `/`.
-  const attacks = [
+  type Attack = { name: string; source: (marker: string) => string; reason?: EmitReason };
+  const attacks: Attack[] = [
     {
       name: "{} / 1 before the import (the reviewer's repro)",
       source: (m: string) => `const q = {} / 1; ${FS} with { type: "macro" }; ${writes(m)} const z = 2 /1;\n${HANDLER}`,
@@ -43,8 +46,10 @@ describe("a Bun macro never runs, however the source is written (B1)", () => {
         `const t = \`\${ {} / 1 }\`; ${FS} with { type: "macro" }; ${writes(m)} const z = 2 /1;\n${HANDLER}`,
     },
     {
+      // A module has no HTML comments, so this is a syntax error; Bun reads the line as a comment and would run the macro.
       name: "an HTML comment opener",
       source: (m: string) => `<!-- x\n${FS} with { type: "macro" }; ${writes(m)}\n${HANDLER}`,
+      reason: "syntax-error",
     },
     {
       name: "a hashbang",
@@ -55,12 +60,15 @@ describe("a Bun macro never runs, however the source is written (B1)", () => {
       source: (m: string) => `${FS} /* a */ with /* b */ { type: /* c */ "macro" }; ${writes(m)}\n${HANDLER}`,
     },
     {
+      // V8 dropped the legacy clause, so on Cloudflare it is a syntax error too; Bun still reads it as an attribute.
       name: "the legacy assert clause",
       source: (m: string) => `${FS} assert { type: "macro" }; ${writes(m)}\n${HANDLER}`,
+      reason: "syntax-error",
     },
     {
       name: "the assert keyword written with an escape",
       source: (m: string) => `${FS} \\u0061ssert { type: "macro" }; ${writes(m)}\n${HANDLER}`,
+      reason: "syntax-error",
     },
     {
       name: "the word macro written with an escape",
@@ -89,26 +97,36 @@ describe("a Bun macro never runs, however the source is written (B1)", () => {
     },
   ];
 
-  for (const { name, source } of attacks) {
+  for (const { name, source, reason } of attacks) {
     test(`${name}: refused, nothing is written`, async () => {
       const marker = markerPath();
       const error = await refusal([esm("index.js", source(marker))]);
-      expect(error.reason).toBe("import-attribute-refused");
+      expect(error.reason).toBe(reason ?? "import-attribute-refused");
       expect(await Bun.file(marker).exists()).toBe(false);
     });
   }
 
-  test("in a module the entry imports, whatever its type", async () => {
-    for (const type of ["esm", "cjs"] as const) {
-      const marker = markerPath();
-      const error = await refusal([
-        esm("index.js", `import "./a.js";\n${HANDLER}`),
-        { name: "a.js", type, content: `const q = {} / 1; ${FS} with { type: "macro" }; ${writes(marker)} 2 /1;` },
-      ]);
-      expect(error.reason).toBe("import-attribute-refused");
-      expect(error.message).toContain('"a.js"');
-      expect(await Bun.file(marker).exists()).toBe(false);
-    }
+  test("in a module the entry imports", async () => {
+    const marker = markerPath();
+    const error = await refusal([
+      esm("index.js", `import "./a.js";\n${HANDLER}`),
+      esm("a.js", `const q = {} / 1; ${FS} with { type: "macro" }; ${writes(marker)} 2 /1;`),
+    ]);
+    expect(error.reason).toBe("import-attribute-refused");
+    expect(error.message).toContain('"a.js"');
+    expect(await Bun.file(marker).exists()).toBe(false);
+  });
+
+  test("in a cjs module an import is a syntax error, as it is on Cloudflare", async () => {
+    const marker = markerPath();
+    const error = await refusal([
+      esm("index.js", `import "./a.js";\n${HANDLER}`),
+      { name: "a.js", type: "cjs", content: `const q = {} / 1; ${FS} with { type: "macro" }; ${writes(marker)} 2 /1;` },
+    ]);
+    expect(error.reason).toBe("syntax-error");
+    expect(error.message).toContain('"a.js"');
+    expect(error.message).toContain("a CommonJS module cannot use import, export, import.meta or top-level await");
+    expect(await Bun.file(marker).exists()).toBe(false);
   });
 
   test("in a module nothing imports", async () => {
@@ -127,32 +145,29 @@ describe("a Bun macro never runs, however the source is written (B1)", () => {
     expect(error.message).toContain("line 3, column");
   });
 
-  test("a source the lexer cannot read fails closed, with the parser's own message", async () => {
+  test("a source no parser reads fails closed", async () => {
     const error = await refusal([esm("index.js", `${FS} with { type: "macro" ${HANDLER}`)]);
     expect(error.reason).toBe("syntax-error");
   });
 
-  test("Bun still honours macros: false (the last layer: a Bun upgrade that drops it fails here)", async () => {
+  test("the emitter's own Bun.build config stops a macro that no source check saw (a dropped option or a Bun upgrade fails here)", async () => {
     const marker = markerPath();
-    const config: Parameters<typeof Bun.build>[0] & { macros: false } = {
-      entrypoints: ["sb:entry"],
-      target: "browser",
-      macros: false,
-      plugins: [
-        {
-          name: "canary",
-          setup(build) {
-            build.onResolve({ filter: /.*/ }, (args) =>
-              args.importer === "" ? { path: "entry", namespace: "canary" } : { path: args.path, external: true },
-            );
-            build.onLoad({ filter: /.*/, namespace: "canary" }, () => ({
-              contents: `${FS} with { type: "macro" }; ${writes(marker)} export default 1;`,
-              loader: "js",
-            }));
-          },
+    // `bundlerConfig` is what `bundleModules` builds with. The source checks run in `bundleModules`, not in the config, so a
+    // macro written straight into a module reaches Bun here exactly as one that fooled both readers would.
+    const config = bundlerConfig("sb:entry", [
+      {
+        name: "canary",
+        setup(build) {
+          build.onResolve({ filter: /.*/ }, (args) =>
+            args.importer === "" ? { path: "entry", namespace: "canary" } : { path: args.path, external: true },
+          );
+          build.onLoad({ filter: /.*/, namespace: "canary" }, () => ({
+            contents: `${FS} with { type: "macro" }; ${writes(marker)} export default 1;`,
+            loader: "js",
+          }));
         },
-      ],
-    };
+      },
+    ]);
     let failure = "built";
     try {
       await Bun.build(config);
@@ -177,6 +192,134 @@ describe("a Bun macro never runs, however the source is written (B1)", () => {
       { name: "app" },
     );
     expect(result.bundled).toContain("with { type: 'macro' }");
+  });
+});
+
+describe("two lexers fooled together (R1): the reviewer's input, and a sweep with Bun as the judge", () => {
+  // es-module-lexer read `/` after `function(){}`, `async function(){}`, `function*(){}` and `yield` as a regex where Bun reads
+  // a division, so it saw `import "node:fs"` where Bun saw the macro import, and the two lists matched. A parser that follows
+  // the grammar reads the macro import itself.
+  const reviewer = (prefix: string, marker: string) =>
+    `let x, y;\nx = ${prefix} / 1; ${FS} with { type: "macro" }; y = 1 / /;import "node:fs";/ / 1 / 1;\n${writes(marker)}\n${HANDLER}`;
+
+  for (const prefix of ["function(){}", "async function(){}", "function*(){}", "yield"]) {
+    test(`x = ${prefix} / 1: refused through the emitter, no marker`, async () => {
+      const marker = markerPath();
+      const error = await refusal([esm("index.js", reviewer(prefix, marker))]);
+      // `yield` is a reserved word in a module, so that variant is a syntax error before it is anything else.
+      expect(error.reason).toBe(prefix === "yield" ? "syntax-error" : "import-attribute-refused");
+      expect(await Bun.file(marker).exists()).toBe(false);
+    });
+  }
+
+  /** Whether Bun, building with the emitter's own config, read a macro import in `source`. */
+  async function bunSawMacro(source: string): Promise<boolean> {
+    const config = bundlerConfig("sb:entry", [
+      {
+        name: "oracle",
+        setup(build) {
+          build.onResolve({ filter: /.*/ }, (args) =>
+            args.importer === "" ? { path: "entry", namespace: "oracle" } : { path: args.path, external: true },
+          );
+          build.onLoad({ filter: /.*/, namespace: "oracle" }, () => ({ contents: source, loader: "js" }));
+        },
+      },
+    ]);
+    try {
+      await Bun.build(config);
+    } catch (error) {
+      return (
+        error instanceof AggregateError && error.errors.some((e) => String(e.message).includes("Macros are disabled"))
+      );
+    }
+    return false;
+  }
+
+  const prefixes = [
+    "x = function(){}",
+    "x = async function(){}",
+    "x = function*(){}",
+    "x = async function*(){}",
+    "x = function f(){}",
+    "x = class {}",
+    "x = class A { m() {} }",
+    "x = () => {}",
+    "x = async () => {}",
+    "if (1)",
+    "if (1) y = 2; else",
+    "for (;;)",
+    "while (0)",
+    "with (a)",
+    "x = a\n",
+    "x = a++\n",
+    "x = yield",
+    "x = await",
+    "x = typeof",
+    "x = void",
+    "x = return",
+    "let",
+    "of",
+    "x = a.return",
+    "x = a.yield",
+    "x = {}",
+    "x = ({})",
+    "x = (a)",
+    "x = [a]",
+    "x = `t`",
+    "x = this",
+    "x = 1",
+    "x = /a/",
+    "x = }",
+    "<!--\n",
+    "x = 1;\n-->",
+    "x = a ? function(){} :",
+    "x = delete",
+    "x = new",
+  ];
+  const forms = [
+    (p: string, m: string) =>
+      `let x, y, a;\n${p} / 1; ${FS} with { type: "macro" }; ${writes(m)} y = 1 / /;import "node:fs";/ / 1 / 1;\n${HANDLER}`,
+    (p: string, m: string) =>
+      `let x, y, a;\n${p} /re/g; import "node:fs"; y = 1 / /; ${FS} with { type: "macro" }; ${writes(m)} /g / 1;\n${HANDLER}`,
+    (p: string, m: string) =>
+      `let x, y, a;\n${p} / 1 / /\n${FS} with { type: "macro" }; ${writes(m)}\n/ 1;import "node:fs";\n${HANDLER}`,
+  ];
+
+  for (const kind of ["esm", "cjs"] as const) {
+    test(`${kind}: every program in which Bun reads a macro import is refused, and none writes a marker`, async () => {
+      let judged = 0;
+      for (const prefix of prefixes)
+        for (const form of forms) {
+          const marker = markerPath();
+          const source = form(prefix, marker);
+          if (!(await bunSawMacro(source))) continue;
+          judged += 1;
+          let refused: unknown;
+          try {
+            checkCodeModule("m.js", source, kind);
+          } catch (error) {
+            refused = error;
+          }
+          if (!(refused instanceof EmitError))
+            throw new Error(`Bun reads a macro import here, and the check did not refuse it:\n${source}`);
+          expect(await Bun.file(marker).exists()).toBe(false);
+        }
+      // Not vacuous: Bun reads a macro import in a good many of them (the reviewer's three among them).
+      expect(judged).toBeGreaterThanOrEqual(10);
+    });
+  }
+
+  test("through the emitter, every one of those is refused or built without a marker", async () => {
+    for (const prefix of prefixes)
+      for (const form of forms) {
+        const marker = markerPath();
+        try {
+          await emitLocal({ modules: [esm("index.js", form(prefix, marker))], metadata }, { name: "app" });
+        } catch (error) {
+          if (!(error instanceof EmitError)) throw error;
+        }
+        expect(await Bun.file(marker).exists()).toBe(false);
+      }
   });
 });
 

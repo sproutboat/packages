@@ -251,6 +251,7 @@ function parse(qs, sep, eq, options) {
   var limit = maxKeys > 0 ? Math.min(pairs.length, maxKeys) : pairs.length;
   for (var i = 0; i < limit; i++) {
     var pair = pairs[i];
+    if (pair.length === 0) continue;
     var eqIdx = pair.indexOf(eq);
     var key, value;
     if (eqIdx >= 0) { key = pair.slice(0, eqIdx); value = pair.slice(eqIdx + eq.length); }
@@ -356,7 +357,41 @@ const NODE_NET_SHIM =
   unavailable("the net module") +
   `class Socket { constructor() { unavailable(); } }
 const ipv4 = /^(?:(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])\\.){3}(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])$/;
-function isIP(x) { return ipv4.test(String(x)) ? 4 : String(x).indexOf(":") >= 0 && /^[0-9a-fA-F:.]+$/.test(String(x)) ? 6 : 0; }
+function isHexGroup(group) {
+  if (group.length < 1 || group.length > 4) return false;
+  for (var i = 0; i < group.length; i++) {
+    var c = group.charCodeAt(i);
+    if (!((c >= 48 && c <= 57) || (c >= 65 && c <= 70) || (c >= 97 && c <= 102))) return false;
+  }
+  return true;
+}
+function groupsOk(text, max, exact) {
+  if (text === "") return max === 0 || !exact;
+  var groups = text.split(":");
+  if (exact ? groups.length !== max : groups.length > max) return false;
+  for (var i = 0; i < groups.length; i++) if (!isHexGroup(groups[i])) return false;
+  return true;
+}
+function isIPv6(address) {
+  var zone = address.indexOf("%");
+  if (zone >= 0) {
+    if (!/^[0-9a-zA-Z.:-]+$/.test(address.slice(zone + 1))) return false;
+    address = address.slice(0, zone);
+  }
+  if (address.indexOf(":") < 0) return false;
+  if (address.indexOf(".") >= 0) {
+    var cut = address.lastIndexOf(":");
+    if (!ipv4.test(address.slice(cut + 1))) return false;
+    address = address.slice(0, cut + 1) + "0:0";
+  }
+  var halves = address.split("::");
+  if (halves.length > 2) return false;
+  if (halves.length === 1) return groupsOk(address, 8, true);
+  var left = halves[0] === "" ? 0 : halves[0].split(":").length;
+  var right = halves[1] === "" ? 0 : halves[1].split(":").length;
+  return left + right <= 7 && groupsOk(halves[0], 7, false) && groupsOk(halves[1], 7, false);
+}
+function isIP(x) { var text = String(x); return ipv4.test(text) ? 4 : isIPv6(text) ? 6 : 0; }
 function connect() { unavailable(); }
 export { Socket, isIP, connect };
 export default { Socket, isIP, connect, createConnection: connect };

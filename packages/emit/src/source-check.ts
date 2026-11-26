@@ -1,8 +1,9 @@
 /**
- * Source checks that keep a Bun macro (an import attribute Bun runs while parsing) from running: three independent
- * layers, described in the README under "Macros". None of them trusts a heuristic.
+ * Source checks that keep a Bun macro (an import attribute Bun runs while parsing) from running. Three layers, described
+ * in the README under "Macros": a full ECMAScript parser (meriyah) that refuses every attribute, Bun's own list of imports
+ * that must equal the parser's, and `macros: false` on the build (virtual-bundle.ts), which holds on its own.
  */
-import { parse } from "es-module-lexer/js";
+import { isParseError, parseModule, parseScript, type ESTree } from "meriyah";
 import { EmitError, issue, type EmitIssue } from "./errors";
 
 const transpiler = new Bun.Transpiler({ loader: "js" });
@@ -39,63 +40,28 @@ export function bundlerIssues(
   fallbackName: string,
   nameOf: (file: string) => string,
   from: "transpiler" | "bundler" = "transpiler",
+  /** Rewrites what a message says about a file (the bundler names its own namespaced paths). */
+  tidy: (message: string) => string = (message) => message,
 ): EmitIssue[] {
   const out: EmitIssue[] = [];
   for (const cause of causes) {
     if (cause instanceof EmitError) out.push(...cause.issues);
     else if (cause instanceof BuildMessage) {
       const at = cause.position;
-      if (at === null) out.push(issue("bundle-failed", `could not bundle ${fallbackName}: ${cause.message}`));
+      if (at === null) out.push(issue("bundle-failed", `could not bundle ${fallbackName}: ${tidy(cause.message)}`));
       else
         out.push(
-          (from === "transpiler" ? syntaxIssue : bundleIssue)(nameOf(at.file), at.line, at.column, cause.message),
+          (from === "transpiler" ? syntaxIssue : bundleIssue)(nameOf(at.file), at.line, at.column, tidy(cause.message)),
         );
     } else
       out.push(
         issue(
           "bundle-failed",
-          `could not bundle ${fallbackName}: ${cause instanceof Error ? cause.message : String(cause)}`,
+          `could not bundle ${fallbackName}: ${tidy(cause instanceof Error ? cause.message : String(cause))}`,
         ),
       );
   }
   return out;
-}
-
-const LINE_BREAKS = new Set(["\n", "\r", String.fromCharCode(0x2028), String.fromCharCode(0x2029)]);
-function hasLineBreak(text: string): boolean {
-  for (const char of text) if (LINE_BREAKS.has(char)) return true;
-  return false;
-}
-
-const NON_NEWLINE_SPACE = new Set([
-  " ",
-  "\t",
-  "\v",
-  "\f",
-  ...[0xa0, 0xfeff, 0x1680, ...Array.from({ length: 11 }, (_, i) => 0x2000 + i), 0x202f, 0x205f, 0x3000].map((code) =>
-    String.fromCharCode(code),
-  ),
-]);
-
-/**
- * Whether anything but the end of the statement follows an import specifier on its line. After
- * `import x from "m"`, a clause (`with {...}`, the legacy `assert {...}`, or whatever a parser might read as one) can only
- * start on the same line: a line terminator ends the statement. Comments are skipped; one that spans a line ends it.
- */
-function clauseFollows(source: string, from: number): boolean {
-  let at = from;
-  while (at < source.length) {
-    const char = source[at]!;
-    if (char === ";" || LINE_BREAKS.has(char)) return false;
-    if (NON_NEWLINE_SPACE.has(char)) at += 1;
-    else if (source.startsWith("//", at)) return false;
-    else if (source.startsWith("/*", at)) {
-      const close = source.indexOf("*/", at + 2);
-      if (close === -1 || hasLineBreak(source.slice(at, close))) return false;
-      at = close + 2;
-    } else return true;
-  }
-  return false;
 }
 
 const attributeRefusal = (name: string, source: string, offset: number) => {
@@ -118,33 +84,115 @@ export function scanImports(name: string, source: string) {
   }
 }
 
+/** How a module is read: `esm` is a module (strict, imports and top-level await), `cjs` a CommonJS script (a top-level `return`, no `import`). */
+export type SourceKind = "esm" | "cjs";
+
+/** Only the offset where a node starts is kept: `range` arrays cost 6 s and 1.2 GB on 8 MiB of `1+1+...`, `start` alone 1 s and 0.6 GB. */
+const POSITIONS = { start: true, end: false, range: false } as const;
+
+const parseSource = (source: string, kind: SourceKind): ESTree.Program =>
+  kind === "esm"
+    ? parseModule(source, { ranges: POSITIONS })
+    : parseScript(source, { ranges: POSITIONS, globalReturn: true, webcompat: true });
+
+/** Whether `source` is a valid ES module (what a CommonJS module cannot be if it uses `import`, `export` or top-level `await`). */
+function parsesAsModule(source: string): boolean {
+  try {
+    parseModule(source, { ranges: POSITIONS });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/* oxlint-disable anti-slop/no-object-parameters, anti-slop/no-reflect-get -- a generic walk over the parser's own tree: node shapes are the ESTree union, and the walk must not recurse */
+/** The offset of the options argument of an `import(specifier, options)` node (where a `with` clause goes), else null. */
+function importOptionsStart(node: object): number | null {
+  if (!("type" in node) || node.type !== "ImportExpression" || !("options" in node)) return null;
+  const options = node.options;
+  if (!(options instanceof Object)) return null;
+  return "start" in options ? Number(options.start) : 0;
+}
+
+/**
+ * The offset of a dynamic `import(specifier, options)` that has an options argument, or null. A walk with its own stack,
+ * so a deep tree cannot overflow the call stack; each node is visited once.
+ */
+function dynamicImportOptions(program: ESTree.Program): number | null {
+  const pending: object[] = [program];
+  for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
+    const options = importOptionsStart(node);
+    if (options !== null) return options;
+    for (const key in node) {
+      const child: unknown = Reflect.get(node, key);
+      if (child instanceof Object) pending.push(child);
+    }
+  }
+  return null;
+}
+
+/* oxlint-enable anti-slop/no-object-parameters, anti-slop/no-reflect-get */
+
+/** The specifiers of the static imports and `export ... from` statements, in source order; refuses any attribute. */
+function staticSpecifiers(name: string, source: string, program: ESTree.Program): string[] {
+  const out: string[] = [];
+  for (const node of program.body) {
+    if (
+      node.type === "ImportDeclaration" ||
+      node.type === "ExportAllDeclaration" ||
+      node.type === "ExportNamedDeclaration"
+    ) {
+      if (node.source === null) continue;
+      const clause = node.attributes[0];
+      if (clause !== undefined) throw attributeRefusal(name, source, clause.start ?? 0);
+      out.push(String(node.source.value));
+    }
+  }
+  return out;
+}
+
 /**
  * Refuse a code module that has an import attribute, does not parse, or that the two readers disagree about. Throws
- * EmitError; returns nothing. Runs in time linear in the size of the source.
+ * EmitError; returns nothing. Time is linear in the size of the source (a 1000-deep nest of calls or brackets is read; deeper
+ * than the parser's stack allows is refused).
  */
-export function checkCodeModule(name: string, source: string): void {
-  let imports: ReturnType<typeof parse>[0];
+export function checkCodeModule(name: string, source: string, kind: SourceKind): void {
+  let program: ESTree.Program;
   try {
-    [imports] = parse(source, name);
+    program = parseSource(source, kind);
   } catch (cause) {
-    const offset = cause instanceof Error && "idx" in cause && Number.isInteger(cause.idx) ? Number(cause.idx) : 0;
-    // The lexer's message names no cause. Bun's does; if Bun reads the module, the two disagree and it is refused as such.
+    if (cause instanceof RangeError)
+      throw new EmitError([
+        issue("limit-exceeded", `module "${name}" is nested too deeply to be checked`, `modules.${name}`),
+      ]);
+    if (!isParseError(cause))
+      throw new EmitError([
+        issue(
+          "source-unverifiable",
+          `module "${name}" could not be checked: ${cause instanceof Error ? cause.message : String(cause)}`,
+          `modules.${name}`,
+        ),
+      ]);
+    // Bun's own message names the cause better; if Bun reads the module, the two disagree and the parser's answer stands.
     scanImports(name, source);
+    let offset = cause.start ?? 0;
+    let detail = cause.description;
+    if (kind === "cjs" && parsesAsModule(source)) {
+      detail = "a CommonJS module cannot use import, export, import.meta or top-level await";
+      // The script goal fails on the token after `await`; point at the `await` itself.
+      const awaited = /\bawait\s*$/.exec(source.slice(Math.max(0, offset - 64), offset));
+      if (awaited !== null) offset = Math.max(0, offset - 64) + awaited.index;
+    }
     const { line, column } = positionOf(source, offset);
-    throw new EmitError([syntaxIssue(name, line, column, "the module could not be read")]);
+    throw new EmitError([syntaxIssue(name, line, column, detail)]);
   }
-  const statics: string[] = [];
-  for (const entry of imports) {
-    if (entry.type === "import-meta") continue;
-    if (entry.attributesStart !== -1) throw attributeRefusal(name, source, entry.attributesStart);
-    if (entry.type === "dynamic") continue;
-    statics.push(entry.specifier);
-    if (clauseFollows(source, entry.importEnd)) throw attributeRefusal(name, source, entry.importEnd);
-  }
+  const specifiers = staticSpecifiers(name, source, program);
+  const options = dynamicImportOptions(program);
+  if (options !== null) throw attributeRefusal(name, source, options);
   const scanned = scanImports(name, source);
   for (const entry of scanned) if (entry.path.startsWith("bun:")) throw noSuchModule(entry.path, name);
   const seen = scanned.filter((entry) => entry.kind === "import-statement").map((entry) => entry.path);
-  if (statics.length !== seen.length || [...statics].sort().join("\0") !== [...seen].sort().join("\0"))
+  if (specifiers.length !== seen.length || specifiers.some((specifier, at) => specifier !== seen[at]))
     throw new EmitError([
       issue(
         "source-unverifiable",

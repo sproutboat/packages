@@ -1,4 +1,5 @@
 /** What a host that compiles locally adds around `emitLocal`: the prelude, and files baked into the module. */
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { readAssetRules, walkAssets, type AssetManifest } from "@sproutboat/assets";
@@ -31,6 +32,12 @@ export function bakeAssets(directory: string, settings: AssetSettings): BakedAss
   let total = 0;
   for (const key of Object.keys(manifest.files)) {
     const bytes = readFileSync(resolve(directory, `.${key}`));
+    // The manifest describes the bytes baked here, even if the file changed since the walk read it.
+    manifest.files[key] = {
+      ...manifest.files[key]!,
+      hash: createHash("sha256").update(bytes).digest("hex"),
+      size: bytes.byteLength,
+    };
     total += bytes.byteLength;
     if (total > MAX_BAKED_ASSET_BYTES)
       throw new Error(

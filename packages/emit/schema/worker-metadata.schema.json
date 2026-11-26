@@ -136,6 +136,7 @@
             "type": { "const": "service" },
             "name": { "$ref": "#/$defs/name" },
             "service": { "type": "string", "minLength": 1 },
+            "environment": { "const": "production" },
             "entrypoint": { "const": "default" }
           }
         },

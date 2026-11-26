@@ -1,7 +1,11 @@
 /** Caps shared by the CLI, the API and the emit unit, so one implementation answers all three. */
 export const MAX_MODULES = 256;
 export const MAX_MODULE_NAME_LENGTH = 256;
-/** Code modules (esm, cjs, text) together: today's source cap. Cloudflare allows 3 MiB free and 10 MiB paid, compressed. */
+/**
+ * Code modules (esm, cjs, text) together: today's source cap, in bytes. Cloudflare's limits page (read 2026-11-26) gives
+ * a Worker 64 MiB uncompressed on both plans and no compressed limit, so this and the caps below are Sproutboat's own,
+ * deliberately tighter (see "Parity notes" in the README). Every cap here counts UTF-8 bytes.
+ */
 export const MAX_CODE_BYTES = 8 * 1024 * 1024;
 /** A `data` module becomes a latin1 string in the module static-data region, which is 1 MiB for the whole module. */
 export const MAX_DATA_MODULE_BYTES = 1024 * 1024;
@@ -13,7 +17,7 @@ export const MAX_SOURCEMAP_BYTES = 8 * 1024 * 1024;
 export const MAX_TOTAL_BYTES = 16 * 1024 * 1024;
 /**
  * What the bundler is handed: code modules plus text and data modules as the string literals they become (a control
- * character grows to 6 bytes). Checked before bundling, and again on the bundled output.
+ * character grows to 6 bytes), in bytes. Checked before bundling, and again on the bundled output in UTF-8 bytes.
  */
 export const MAX_BUNDLED_BYTES = 16 * 1024 * 1024;
 export const MAX_METADATA_BYTES = 256 * 1024;

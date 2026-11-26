@@ -38,8 +38,19 @@ var require_legacy = __commonJS(function(exports, module) {
   module.exports = { answer, twice: (n) => n * 2 };
 });
 
+// lib/transpiled.cjs
+var require_transpiled = __commonJS(function(exports) {
+  Object.defineProperty(exports, "__esModule", { value: true });
+  exports.named = undefined;
+  exports.default = function transpiledDefault() {
+    return "the default property";
+  };
+  exports.named = "the named export";
+});
+
 // index.js
 var import_legacy = __toESM(require_legacy(), 1);
+var import_transpiled = __toESM(require_transpiled(), 1);
 
 // lib/shout.js
 var shout = function parseInt_sb(text) {
@@ -55,6 +66,8 @@ var project_default = {
     const url = new URL(request.url);
     if (url.pathname === "/legacy")
       return Response.json({ answer: import_legacy.default.answer, twice: import_legacy.default.twice(21) });
+    if (url.pathname === "/transpiled")
+      return Response.json({ kind: typeof import_transpiled.default, keys: Object.keys(import_transpiled.default).sort(), named: import_transpiled.default.named });
     if (url.pathname === "/shout")
       return new Response(shout("hi"));
     if (url.pathname === "/quote")

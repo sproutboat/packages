@@ -20,13 +20,19 @@ type Fixture = {
 const root = resolve(import.meta.dir, "fixtures/bundler");
 const names = readdirSync(root).sort();
 
-/** The four known differences, and why, are in the README under "Bundler differences". */
+/**
+ * The three known differences, and why, are in the README under "Bundler differences". Nothing here rewrites code that
+ * runs: the default-import rule for CommonJS (`__toESM(x, 1)`) is deliberately NOT normalised, so a difference in it fails.
+ */
 function normalise(code: string): string {
-  return code
-    .replace(/^\/\/ (?:sb-module|sb-node-shim|sb-shim|sb-global|sb-node-global):(.*)$/gm, "// $1")
-    .replace(/\bproject_default\b/g, "index_default")
-    .replace(/__toESM\(([^()]*\([^()]*\)), 1\)/g, "__toESM($1)")
-    .replace(/^\/\/ (?:node:)?sb-node-process\n[\s\S]*?(?=^\/\/ )/m, "// sb-node-process stub\n");
+  return (
+    code
+      .replace(/^\/\/ (?:sb-module|sb-file|sb-node-shim|sb-shim|sb-global|sb-node-global):(.*)$/gm, "// $1")
+      // An ES module's path ends in .mjs for the emitter and .js on the CLI's disk.
+      .replace(/^\/\/ (.*?)\.m?js$/gm, "// $1")
+      .replace(/\bproject_default\b/g, "index_default")
+      .replace(/^\/\/ (?:node:)?sb-node-process\n[\s\S]*?(?=^\/\/ )/m, "// sb-node-process stub\n")
+  );
 }
 
 describe("the emitter's bundler against the CLI's, on the same project", () => {
@@ -42,7 +48,7 @@ describe("the emitter's bundler against the CLI's, on the same project", () => {
       bindings: fixture.bindings,
     };
 
-    test(`${name}: byte-identical once the four known differences are normalised`, async () => {
+    test(`${name}: byte-identical once the three known differences are normalised`, async () => {
       const result = await emitLocal({ modules, metadata }, { name });
       expect(normalise(result.bundled)).toBe(normalise(cli));
     });
@@ -76,6 +82,26 @@ describe("the emitter's bundler against the CLI's, on the same project", () => {
       expect(recorded).toBe(Bun.version);
     });
   }
+
+  test("a tsc- or Babel-style CommonJS module (it sets __esModule) default-imports as module.exports, as in the CLI and on Cloudflare (R3)", async () => {
+    const dir = join(root, "cjs-and-builtins");
+    const fixture: Fixture = JSON.parse(readFileSync(join(dir, "fixture.json"), "utf8"));
+    const result = await emitLocal(
+      {
+        modules: projectModules(join(dir, "project")),
+        metadata: {
+          main_module: "index.js",
+          compatibility_date: fixture.compatibility_date,
+          compatibility_flags: fixture.compatibility_flags,
+        },
+      },
+      { name: "cjs" },
+    );
+    expect(result.bundled).toContain("__toESM(require_transpiled(), 1)");
+    const answer = await runBundle(result.bundled, {}, "/transpiled");
+    // module.exports has the keys `default` and `named`: the default import is that object, not its `default` property.
+    expect(JSON.parse(answer.body)).toEqual({ kind: "object", keys: ["default", "named"], named: "the named export" });
+  });
 
   test("the fixtures cover a multi-module project, Node built-ins with free globals, and CommonJS", () => {
     expect(names).toEqual(["cjs-and-builtins", "multi-module", "node-globals"]);

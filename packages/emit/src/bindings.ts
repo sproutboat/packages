@@ -5,6 +5,7 @@
 import { isBindingName } from "@sproutboat/config";
 import type { Bindings, QueueSettings } from "@sproutboat/runtime";
 import { EmitError, issue } from "./errors";
+import { MAX_BINDINGS, MAX_QUEUE_CONSUMERS } from "./limits";
 import type { Json, WorkerMetadata } from "./metadata";
 
 export type RecordBinding = {
@@ -264,16 +265,19 @@ export function deriveBindings(metadata: WorkerMetadata, options: DeriveOptions 
     ...order("assets"),
     ...runtime.secrets.map((name): RecordBinding => ({ name, kind: "secret", resource_id: null, config: {} })),
   ];
-  if (record.bindings.length + record.services.length > 64)
+  if (record.bindings.length + record.services.length > MAX_BINDINGS)
     throw new EmitError([
       issue(
         "limit-exceeded",
-        `the upload declares ${record.bindings.length + record.services.length} bindings (secrets, services and assets count); the Cloud takes at most 64 per app`,
+        `the upload declares ${record.bindings.length + record.services.length} bindings (secrets, services and assets count); the Cloud takes at most ${MAX_BINDINGS} per app`,
       ),
     ]);
-  if (record.queue_consumers.length > 16)
+  if (record.queue_consumers.length > MAX_QUEUE_CONSUMERS)
     throw new EmitError([
-      issue("limit-exceeded", `${record.queue_consumers.length} queue consumers; the Cloud takes at most 16 per app`),
+      issue(
+        "limit-exceeded",
+        `${record.queue_consumers.length} queue consumers; the Cloud takes at most ${MAX_QUEUE_CONSUMERS} per app`,
+      ),
     ]);
   if (pinned.length > 0)
     warnings.push(

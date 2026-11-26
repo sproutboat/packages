@@ -6,7 +6,6 @@ import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { REGION_MARKER } from "../src/emit";
-import { loadPrelude } from "../src/host";
 import { canonical } from "./canonical";
 
 type Variant = { name: string; dir: string; date?: string; wrangler?: string; versionMetadata?: boolean };
@@ -74,6 +73,9 @@ const projectConfig = await import(join(cliDir, "src/project-config.ts"));
 const bundler = await import(join(cliDir, "src/bundle.ts"));
 const standalone = await import(join(cliDir, "src/standalone-build.ts"));
 const cloudBindings = await import(join(cliDir, "src/cloud-bindings.ts"));
+// The fingerprint is of the prelude the CLI compiled with (its own runtime), not the one this repository holds: if the two
+// differ, the whole-file tests say the fixtures are stale instead of failing a byte comparison.
+const cliCompile = await import(join(cliDir, "src/compile.ts"));
 
 rmSync(out, { recursive: true, force: true });
 rmSync(scratch, { recursive: true, force: true });
@@ -155,7 +157,7 @@ for (const variant of projects()) {
       sha256: sha(full),
       canonicalSha256: sha(canonical(full)),
       bytes: full.length,
-      preludeSha256: sha(loadPrelude(mode === "broker" ? "broker" : "embedded")),
+      preludeSha256: sha(await cliCompile.loadPrelude(mode === "broker" ? "broker" : "embedded")),
     };
     if (assetBake !== undefined) record[mode]!.assetBake = assetBake;
   }

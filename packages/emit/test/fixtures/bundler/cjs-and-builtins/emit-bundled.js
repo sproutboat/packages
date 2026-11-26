@@ -32,21 +32,32 @@ var __toESM = (mod, isNodeMode, target) => {
 };
 var __commonJS = (cb, mod) => () => (mod || cb((mod = { exports: {} }).exports, mod), mod.exports);
 
-// sb-module:lib/legacy.cjs
+// sb-file:lib/legacy.cjs
 var require_legacy = __commonJS(function(exports, module) {
   var answer = 42;
   module.exports = { answer, twice: (n) => n * 2 };
 });
 
-// sb-module:index.js
-var import_legacy = __toESM(require_legacy());
+// sb-file:lib/transpiled.cjs
+var require_transpiled = __commonJS(function(exports) {
+  Object.defineProperty(exports, "__esModule", { value: true });
+  exports.named = undefined;
+  exports.default = function transpiledDefault() {
+    return "the default property";
+  };
+  exports.named = "the named export";
+});
 
-// sb-module:lib/shout.js
+// sb-module:index.mjs
+var import_legacy = __toESM(require_legacy(), 1);
+var import_transpiled = __toESM(require_transpiled(), 1);
+
+// sb-module:lib/shout.mjs
 var shout = function parseInt_sb(text) {
   return text.toUpperCase() + "!";
 };
 
-// sb-module:index.js
+// sb-module:index.mjs
 var quote = function escape_sb(text) {
   return `"${text}"`;
 };
@@ -55,6 +66,8 @@ var index_default = {
     const url = new URL(request.url);
     if (url.pathname === "/legacy")
       return Response.json({ answer: import_legacy.default.answer, twice: import_legacy.default.twice(21) });
+    if (url.pathname === "/transpiled")
+      return Response.json({ kind: typeof import_transpiled.default, keys: Object.keys(import_transpiled.default).sort(), named: import_transpiled.default.named });
     if (url.pathname === "/shout")
       return new Response(shout("hi"));
     if (url.pathname === "/quote")

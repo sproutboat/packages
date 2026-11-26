@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { EmitError, emitLocal, type EmitReason, type JsonObject, type ModuleInput } from "./index";
+import { runBundle } from "../test/run-bundle";
 
 const esm = (name: string, content: string): ModuleInput => ({ name, type: "esm", content });
 const HANDLER = `export default { fetch() { return new Response("ok"); } };`;
@@ -253,7 +254,6 @@ describe("hostile input", () => {
     const attacks = [
       `import x from "./a.js" with { type: "macro" }; export default { fetch() {} };`,
       `import x from "./a.js" with { type: "file" }; export default { fetch() {} };`,
-      `import x from "./a.js" assert { type: "sqlite" }; export default { fetch() {} };`,
       `export { x } from "./a.js" with { type: "toml" }; export default { fetch() {} };`,
       `export default { async fetch() { return import("./a.js", { with: { type: "macro" } }); } };`,
     ];
@@ -261,6 +261,14 @@ describe("hostile input", () => {
       const error = await refusal(emit([esm("index.js", source), esm("a.js", "export const x = 1;")]));
       expect(error.reason).toBe("import-attribute-refused");
     }
+    // The legacy clause is a syntax error in V8 (so on Cloudflare); Bun would still read it as an attribute.
+    const legacy = await refusal(
+      emit([
+        esm("index.js", `import x from "./a.js" assert { type: "sqlite" }; export default { fetch() {} };`),
+        esm("a.js", "export const x = 1;"),
+      ]),
+    );
+    expect(legacy.reason).toBe("syntax-error");
     const inChunk = await refusal(
       emit([
         esm("index.js", `import "./a.js"; export default { fetch() {} };`),
@@ -269,6 +277,80 @@ describe("hostile input", () => {
       ]),
     );
     expect(inChunk.reason).toBe("import-attribute-refused");
+  });
+
+  test("a bundler error names the uploaded module, never the plugin namespace (R6)", async () => {
+    const error = await refusal(
+      emit([
+        esm(
+          "index.js",
+          `import { nope } from "./lib/b.js"; export default { fetch() { return new Response(nope); } };`,
+        ),
+        esm("lib/b.js", "export const other = 1;"),
+      ]),
+    );
+    expect(error.reason).toBe("bundle-failed");
+    expect(error.message).toContain('"lib/b.js"');
+    expect(error.message).not.toContain("sb-module");
+    expect(error.message).not.toContain("sb-file");
+    expect(error.message).not.toContain(".mjs");
+  });
+
+  test("a syntax error in a module, however it is named, shows the name it was uploaded with", async () => {
+    for (const name of ["lib/a.js", "lib/a.mjs", "lib/a"]) {
+      const error = await refusal(
+        emit([esm("index.js", `import "./${name}"; export default { fetch() {} };`), esm(name, "export const a = (;")]),
+      );
+      expect(error.reason).toBe("syntax-error");
+      expect(error.message).toContain(`"${name}"`);
+    }
+  });
+
+  test("modules whose bundler paths would clash (a.js and a.mjs, x.mjs as cjs and x.js as an ES module) stay distinct", async () => {
+    const result = await emitLocal(
+      {
+        modules: [
+          esm(
+            "index.js",
+            `import a from "./a.js"; import b from "./a.mjs"; import x from "./x.js"; import y from "./x.mjs"; export default { fetch() { return new Response([a, b, x, y.v].join("|")); } };`,
+          ),
+          esm("a.js", `export default "js";`),
+          esm("a.mjs", `export default "mjs";`),
+          esm("x.js", `export default "esm x";`),
+          { name: "x.mjs", type: "cjs", content: `module.exports = { v: "cjs x" };` },
+        ],
+        metadata: { main_module: "index.js", compatibility_date: "2026-11-22" },
+      },
+      { name: "app" },
+    );
+    expect((await runBundle(result.bundled, {})).body).toBe("js|mjs|esm x|cjs x");
+  });
+
+  test("top-level await in a cjs module is refused, as on Cloudflare (R7); await inside a function and a top-level return are not", async () => {
+    const refused = await refusal(
+      emit([
+        esm("index.js", `import "./a.cjs"; export default { fetch() {} };`),
+        { name: "a.cjs", type: "cjs", content: `const x = await Promise.resolve(1);\nmodule.exports = x;` },
+      ]),
+    );
+    expect(refused.reason).toBe("syntax-error");
+    expect(refused.message).toContain('"a.cjs" at line 1, column 11');
+    expect(refused.message).toContain("top-level await");
+    const fine = await emitLocal(
+      {
+        modules: [
+          esm("index.js", `import v from "./a.cjs"; export default { fetch() { return new Response(String(v)); } };`),
+          {
+            name: "a.cjs",
+            type: "cjs",
+            content: `async function f() { return await 1; }\nif (typeof f !== "function") return;\nmodule.exports = 7;`,
+          },
+        ],
+        metadata: { main_module: "index.js", compatibility_date: "2026-11-22" },
+      },
+      { name: "app" },
+    );
+    expect((await runBundle(fine.bundled, {})).body).toBe("7");
   });
 
   test("a macro is never run: nothing is written, nothing is read", async () => {

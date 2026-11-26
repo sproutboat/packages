@@ -38,9 +38,57 @@ describe("schema file", () => {
     for (const field of IGNORED_METADATA_FIELDS) expect(Object.keys(schema.properties)).toContain(field);
     expect(schema.properties.compatibility_flags.items.enum).not.toContain("wasm");
   });
+  test("a service binding's environment: the schema takes what the validator takes (production), nothing else", () => {
+    const service = schema.$defs.binding.oneOf.find((entry) => entry.properties.type.const === "service");
+    expect(service?.properties).toHaveProperty("environment", { const: "production" });
+    const binding = (environment: string) => ({ type: "service", name: "BILLING", service: "billing", environment });
+    expect(ok({ ...base, bindings: [binding("production")] }).value.bindings).toHaveLength(1);
+    expect(refusal({ ...base, bindings: [binding("staging")] })[0]?.reason).toBe("binding-invalid");
+  });
   test("accepted and refused binding types do not overlap", () => {
     for (const type of REFUSED_BINDING_TYPES)
       expect(ACCEPTED_BINDING_TYPES.some((accepted) => accepted === type)).toBe(false);
+  });
+});
+
+describe("validateMetadata, dates and serialisation", () => {
+  const old = { ...base, compatibility_date: "2026-11-20" };
+  test("a floor newer than the newest date the builder knows is refused, not emitted", () => {
+    const errors = refusal(old, { maxCompatibilityDate: "2026-11-21", compatibilityFloor: "2026-11-22" });
+    expect(errors[0]?.reason).toBe("compat-date-invalid");
+    expect(errors[0]?.message).toContain(
+      "builds as 2026-11-22, which is newer than the newest date this builder knows, 2026-11-21",
+    );
+  });
+  test("a floor in the future is refused", () => {
+    const errors = refusal(old, { now: new Date("2026-11-21T10:00:00Z"), compatibilityFloor: "2026-11-22" });
+    expect(errors[0]?.message).toContain("builds as 2026-11-22, which is in the future");
+  });
+  test("a floor inside both bounds still raises the date", () => {
+    const result = ok(old, {
+      now: new Date("2026-11-25T00:00:00Z"),
+      maxCompatibilityDate: "2026-11-24",
+      compatibilityFloor: "2026-11-22",
+    });
+    expect(result.value.compatibility_date).toBe("2026-11-22");
+  });
+  test("metadata that cannot be serialised is a refusal, not an exception (a cycle, a BigInt, nesting past the stack)", () => {
+    type Nested = number | Nested[];
+    let deep: Nested = 1;
+    for (let i = 0; i < 100_000; i += 1) deep = [deep];
+    const cycle = { ...base, self: {} };
+    cycle.self = cycle;
+    // SAFETY: none of these is Json on purpose; a JavaScript caller can pass them, and validateMetadata must refuse them.
+    // oxlint-disable-next-line anti-slop/no-chained-type-assertions -- none of these is Json on purpose: a JavaScript caller can pass them, and validateMetadata must refuse them.
+    const inputs = [cycle, { ...base, big: 10n }, { ...base, deep }] as unknown as Parameters<
+      typeof validateMetadata
+    >[0][];
+    for (const input of inputs)
+      expect(refusal(input)[0]).toEqual({
+        reason: "metadata-invalid",
+        message: "metadata cannot be serialized to JSON",
+        path: "metadata",
+      });
   });
 });
 

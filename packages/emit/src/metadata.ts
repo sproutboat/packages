@@ -708,6 +708,17 @@ function validateDate(c: Collector, declared: Input, options: ValidateMetadataOp
       path,
     );
   if (options.compatibilityFloor !== undefined && declared < options.compatibilityFloor) {
+    // The build date must stay inside every bound the declared date had to meet.
+    const floor = options.compatibilityFloor;
+    if (options.maxCompatibilityDate !== undefined && floor > options.maxCompatibilityDate)
+      bad(
+        c,
+        "compat-date-invalid",
+        `compatibility_date ${declared} is Cloudflare's date and builds as ${floor}, which is newer than the newest date this builder knows, ${options.maxCompatibilityDate}`,
+        path,
+      );
+    if (options.now !== undefined && floor > options.now.toISOString().slice(0, 10))
+      bad(c, "compat-date-invalid", `compatibility_date ${declared} builds as ${floor}, which is in the future`, path);
     c.warnings.push(
       `compatibility_date ${declared} is Cloudflare's date: the build uses ${options.compatibilityFloor}`,
     );
@@ -802,7 +813,13 @@ export function validateMetadata(input: Input, options: ValidateMetadataOptions 
   const c: Collector = { errors: [], warnings: [] };
   if (!isRecord(input))
     return { ok: false, errors: [issue("metadata-invalid", "metadata must be an object", "metadata")] };
-  const size = new TextEncoder().encode(JSON.stringify(input)).byteLength;
+  let size: number;
+  try {
+    size = new TextEncoder().encode(JSON.stringify(input)).byteLength;
+  } catch {
+    // A cycle, a BigInt, or nesting past the serializer's stack: a JavaScript caller can hand any of them in.
+    return { ok: false, errors: [issue("metadata-invalid", "metadata cannot be serialized to JSON", "metadata")] };
+  }
   if (size > MAX_METADATA_BYTES)
     return {
       ok: false,
@@ -941,14 +958,30 @@ export function stripSecretValues<T extends Pick<WorkerMetadata, "bindings">>(me
   };
 }
 
-/** Characters of `text` once it is a JSON string literal: a control character grows to 6, a quote or backslash to 2. */
-function jsonLiteralLength(text: string): number {
-  let length = 2;
+/**
+ * UTF-8 bytes of `text` once it is a JSON string literal (what JSON.stringify prints): a control character grows to 6, a
+ * quote or backslash to 2, a lone surrogate to 6 (`\\udXXX`), and every other character stays as its UTF-8 bytes.
+ */
+function jsonLiteralBytes(text: string): number {
+  let bytes = 2;
   for (let at = 0; at < text.length; at += 1) {
     const code = text.charCodeAt(at);
-    length += code < 32 ? 6 : code === 34 || code === 92 ? 2 : 1;
+    if (code < 32) bytes += 6;
+    else if (code === 34 || code === 92) bytes += 2;
+    else if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (
+      code >= 0xd800 &&
+      code <= 0xdbff &&
+      text.charCodeAt(at + 1) >= 0xdc00 &&
+      text.charCodeAt(at + 1) <= 0xdfff
+    ) {
+      bytes += 4;
+      at += 1;
+    } else if (code >= 0xd800 && code <= 0xdfff) bytes += 6;
+    else bytes += 3;
   }
-  return length;
+  return bytes;
 }
 
 /** One module of a bundle: contents (the emit unit) or a digest (the API, before queueing). Type and name are unchecked input. */
@@ -1026,7 +1059,7 @@ export function validateModules(
       bundledBytes += bytes;
     } else if (type === "text") {
       codeBytes += bytes;
-      bundledBytes += content instanceof Uint8Array ? bytes : jsonLiteralLength(content);
+      bundledBytes += content instanceof Uint8Array ? bytes : jsonLiteralBytes(content);
     }
   });
   if (dataBytes > MAX_DATA_TOTAL_BYTES)

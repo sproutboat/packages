@@ -9,6 +9,7 @@ import {
   type EmitReason,
   type ModuleInput,
 } from "./index";
+import { checkBundledSize } from "./virtual-bundle";
 
 const HANDLER = `export default { fetch() { return new Response("ok"); } };\n`;
 const esm = (name: string, content: string): ModuleInput => ({ name, type: "esm", content });
@@ -41,7 +42,8 @@ describe("every check runs in time linear in the input (S1)", () => {
       const started = performance.now();
       const result = await outcome([esm("index.js", source)]);
       expect(performance.now() - started).toBeLessThan(2000);
-      expect(result.reason).toBe("syntax-error");
+      // Input that nests without end is refused as too deep (the parser's stack) or as a syntax error, never a crash.
+      expect(["syntax-error", "limit-exceeded"]).toContain(result.reason);
     });
   }
 
@@ -117,6 +119,32 @@ describe("size caps are checked before anything is bundled (S3)", () => {
     expect(result.reason).toBe("limit-exceeded");
     expect(result.message).toContain(`at most ${MAX_BUNDLED_BYTES}`);
     expect(performance.now() - started).toBeLessThan(1000);
+  });
+
+  test("every cap counts UTF-8 bytes: lone surrogates, which JSON.stringify prints as 6 bytes, are counted as 6 (R4)", async () => {
+    // 2 MiB of control characters grow to 12 MiB; 1 Mi lone surrogates grow to 6 MiB. Counted one unit each, the sum was 13 MiB
+    // and passed the check before bundling; counted as bytes it is 18 MiB and is refused there, with the same unit in the message.
+    const modules: ModuleInput[] = [
+      esm("index.js", `import a from "./a.txt"; import b from "./b.txt";\n${HANDLER}`),
+      { name: "a.txt", type: "text", content: "\u0001".repeat(2 * MIB) },
+      { name: "b.txt", type: "text", content: "\ud800".repeat(MIB) },
+    ];
+    const result = await outcome(modules);
+    expect(result.reason).toBe("limit-exceeded");
+    expect(result.message).toMatch(/grow to \d+ bytes once text and data modules become string literals/);
+  });
+
+  test("the cap on the bundled output counts UTF-8 bytes, not UTF-16 units (R4)", () => {
+    // 4.5 Mi astral characters are 9 Mi units but 18 MB in UTF-8; by units they would pass a 16 MiB cap.
+    const output = "\u{1F600}".repeat(4.5 * MIB);
+    expect(output.length).toBeLessThan(MAX_BUNDLED_BYTES);
+    let message = "";
+    try {
+      checkBundledSize(output);
+    } catch (error) {
+      message = error instanceof EmitError ? error.message : String(error);
+    }
+    expect(message).toBe(`the bundled module is ${Buffer.byteLength(output)} bytes; at most ${MAX_BUNDLED_BYTES}`);
   });
 
   test("text that stays under the expanded cap still bundles", async () => {

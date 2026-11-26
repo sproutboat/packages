@@ -89,8 +89,9 @@ describe("the CLI's emit, reproduced from its bundle and config", () => {
         const result = await emitLocal({ modules, metadata: fromConfig(config) }, options);
         expect(result.source.length).toBe(record.bytes);
         expect(sha(canonical(result.source))).toBe(record.canonicalSha256);
-        // On the machine the CLI ran on, the plain bytes match as well.
-        if (process.platform === "darwin") expect(sha(result.source)).toBe(record.sha256);
+        // The plain bytes match as well wherever the output does not depend on a directory listing: the CLI lists baked files in
+        // readdir order, which differs between file systems, so a fixture with baked assets is held to the canonical form only.
+        if (options.bakedAssets === undefined) expect(sha(result.source)).toBe(record.sha256);
       });
     }
   }
