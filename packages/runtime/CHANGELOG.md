@@ -1,5 +1,11 @@
 # @sproutboat/runtime
 
+## 0.51.1
+
+### Patch Changes
+
+- 0ae44dc: `validateHttpSyncSource` and `neutraliseExports` read source in linear time. A long run of blank lines, or `import`, `from` or `require` followed by a long run of whitespace, made them quadratic (a 1 MiB upload took minutes). The patterns now match the same text; only the cost changes.
+
 ## 0.51.0
 
 ### Minor Changes
