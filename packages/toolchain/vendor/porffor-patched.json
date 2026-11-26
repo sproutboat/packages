@@ -36,18 +36,20 @@
       "0025-date-Date.parse-takes-HH-and-HHmm-offsets-as-well-as.patch",
       "0026-security-compiled-code-may-not-name-the-compiler-s-i.patch",
       "0027-codegen-block-function-declarations-reach-a-fixpoint.patch",
-      "0028-builtins-regenerate-compiler-builtins_precompiled.js.patch"
+      "0028-date-Date.parse-takes-the-en-US-locale-shape-RFC-282.patch",
+      "0029-object-storing-an-object-with-no-toString-into-an-ar.patch",
+      "0030-builtins-regenerate-compiler-builtins_precompiled.js.patch"
     ],
-    "sha256": "4756d518f73d32847df3c97bfb14a35383559f5f6f11538572873e2932ef14c3"
+    "sha256": "8fba6dfc2afe7806d51ed8430d57170469c64e8a44557163820a5e5a8cd95057"
   },
   "tar": {
-    "sha256": "36a708925490a1606a9427781f6967ce8f077b87177e5c1f69fc48e900be4c73",
-    "bytes": 6352384
+    "sha256": "ec457623f5e7558cd2cf4887d0d0a2804d93dc009d4b94b86d7a22e24a79b237",
+    "bytes": 6369792
   },
   "tarball": {
     "file": "porffor-patched.tar.gz",
-    "sha256": "d7209294abfca5477a2b67055ac5ab151416e282b8dc6f70e00b89dcd1e87582",
-    "bytes": 1596689,
+    "sha256": "0e2685a66f50e73a5b16f7f23991cf82bec32dfc3962d515aac8d718f632b67c",
+    "bytes": 1598055,
     "compressor": "bun 1.4.4 gzipSync level 9"
   }
 }

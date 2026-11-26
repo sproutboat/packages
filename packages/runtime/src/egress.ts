@@ -1,20 +1,6 @@
-/**
- * baronunread/sproutboat#174 — `fetch()` never reaches a private or reserved
- * address. A sprout is a real OS process, so without this it could reach the
- * operator's loopback services, their private network, or a cloud metadata
- * endpoint, none of which a Worker can touch.
- *
- * Both backends check the address they are about to connect to, never the
- * hostname: the broker (`@sproutboat/wire`) here in TS, the standalone client
- * in C (`transport-embedded.js`). This table is the one source of truth; the C
- * copy is generated from it (`bun run gen:egress`) and a test fails if the two
- * drift, while another runs the C check against this one on the same vectors.
- *
- * The override belongs to the operator, not the handler: `SB_EGRESS_ALLOW` in
- * the broker's or the binary's environment, either `*` or a comma-separated
- * list of exact addresses.
- * ponytail: exact addresses only, add CIDR entries if an operator needs a subnet.
- */
+// baronunread/sproutboat#174: fetch() never reaches a private or reserved address; both backends check the address
+// they connect to, never the hostname. This table is the one source of truth: the C copy is generated from it
+// (`bun run gen:egress`) and a test fails on drift. `SB_EGRESS_ALLOW` (`*` or exact addresses) belongs to the operator.
 
 /** Blocked ranges. IPv4-mapped (`::ffff:0:0/96`), NAT64 (`64:ff9b::/96`) and
  *  6to4 (`2002::/16`) addresses are checked by the IPv4 address they embed. */
@@ -41,10 +27,8 @@ export const BLOCKED_RANGES = [
   "fe80::/10",
   "fec0::/10",
   "ff00::/8",
-  // Reserved space that carries no public service: AS112 and the IETF's old anycast
-  // blocks, SIIT (`::ffff:0:0:0/96`, which embeds an IPv4 address the mapped rule
-  // above does not see), IETF protocol assignments (includes Teredo, `2001::/32`),
-  // the second documentation block and SRv6 SIDs.
+  // Reserved space with no public service: AS112, the IETF's old anycast blocks, SIIT (`::ffff:0:0:0/96`, which embeds
+  // an IPv4 address the mapped rule above misses), IETF protocol assignments (Teredo), the second documentation block, SRv6.
   "192.31.196.0/24",
   "192.52.193.0/24",
   "192.88.99.0/24",

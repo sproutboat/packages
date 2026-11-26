@@ -1,21 +1,6 @@
-/**
- * The standalone server: the uWebSockets shim vendored in `standalone-server/uws-shim.cpp` (it began as
- * Porffor alpha 19's `makeUWebSocketsShimSource()` with the toolchain's patches: restart handover, WebSockets, request
- * and response streaming, R2 transfers, body limit, GC pacing) with its heap-layout sites rewritten
- * over flat data, so it drives the alpha 22 bridge (`native-fetch-a22.c`) instead of alpha 19's
- * render.js entry points. Everything else in the shim is C++ over plain C data and is kept verbatim.
- *
- * The alpha 19 shim read the heap in two places: building the request (the URL bytestring and the
- * headers array, alpha 19's `[len][entries][cap]` layout with packed jsvals) and reading the response
- * (`NativeFetchResponseParts`, the headers array walked three times, `sb_read_value_fast`). Here the
- * request goes to the bridge as method, URL, a name\0value\0 header blob and the body; the response
- * comes back from the bridge (`porf_native_fetch_response_complete_flat`) as status, the same kind of
- * blob and a body, during the dispatch call or later. The promise reactions alpha 19 attached in C
- * are gone: the dispatch shim's `then` callbacks complete the response from JS.
- *
- * Every edit is anchored on the shim's text and applied once; an anchor that is not found once fails
- * loudly (the alpha 19 chain changed under it).
- */
+// The standalone server: the uWebSockets shim vendored in `standalone-server/uws-shim.cpp` (from Porffor alpha 19's
+// `makeUWebSocketsShimSource()` plus the toolchain's patches) with its heap-layout sites rewritten over flat data to drive the
+// alpha 22 bridge (`native-fetch-a22.c`). Every edit is anchored on the shim's text and applied once; a missing anchor fails loudly.
 
 function replaceRegion(
   src: string,

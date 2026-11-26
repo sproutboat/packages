@@ -134,6 +134,9 @@ test("an ordinary app compiles: strings, comments, flags named like dunders and 
       "globalThis.__DEV__ = 1; const __esModule = true; const o = { __proto__: null };",
       // Rolldown's CommonJS interop helpers (every Alchemy bundle has them): a dunder with an underscore tail that is not a builtin's.
       "const __toESMCache_node = new WeakMap(), __toESMCache_esm = new WeakMap(); __toESMCache_node.set({}, 1); __toESMCache_esm.set({}, 2);",
+      // Names libraries write that look like an intrinsic and are not one: no builtin has such a namespace.
+      "const __COMPILER_RUNTIME = 1, __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = 2, __zod_x = 3, __rou3_y = 4, __kysely_z = 5, __unsafe_ensureInitialized = 6, __vite_import_meta_env__ = 7;",
+      "if (__COMPILER_RUNTIME + __SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED + __zod_x + __rou3_y + __kysely_z + __unsafe_ensureInitialized + __vite_import_meta_env__ !== 28) throw new Error('x');",
       "const d = 'Porffor.c and __Porffor_malloc in a string'; // Porffor.c in a comment",
       "/* __Porffor_malloc, __Array_prototype_join */",
       "const f = new Function('a', 'b', 'return a + b'); const s = eval('1 + 2');",
