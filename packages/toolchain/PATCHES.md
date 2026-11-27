@@ -1,8 +1,8 @@
 # Porffor patches against upstream
 
 The patch series is the source of truth: `packages/toolchain/porffor-patches/`, a `git format-patch` series of
-30 patches against ONE upstream commit, [CanadaHonk/porffor](https://github.com/CanadaHonk/porffor)
-`c9af40c` (tag `alpha-25`, 2026-11-17). The toolchain supports one Porffor alpha at a time. This file is the index.
+28 patches against ONE upstream commit, [CanadaHonk/porffor](https://github.com/CanadaHonk/porffor)
+`8037e56` (tag `alpha-26`, 2026-11-27). The toolchain supports one Porffor alpha at a time. This file is the index.
 
 What ships is the patched tree: `vendor/porffor-patched.tar.gz` (the commit with the series applied) and
 `vendor/porffor-patched.json` (upstream commit, series hash, tar and tarball sha256). `ensurePorfforA21` verifies the
@@ -54,18 +54,17 @@ Applied in this order. Every patch has what and why in its commit message.
 | [`0018-render-select-is-a-reserved-C-name.patch`](porffor-patches/0018-render-select-is-a-reserved-C-name.patch) | `select` is a reserved C name | upstream | [#462](https://github.com/CanadaHonk/porffor/issues/462), open (filed by us 2026-11-11). [#426](https://github.com/CanadaHonk/porffor/issues/426) (ours, closed) fixed all-caps macro names only | `const select = 1` fails the C compile on Linux (glibc `sys/select.h`) |
 | [`0019-fetch-Response.redirect-and-Response.error.patch`](porffor-patches/0019-fetch-Response.redirect-and-Response.error.patch) | `Response.redirect` / `Response.error` | upstream | [#463](https://github.com/CanadaHonk/porffor/issues/463), open (filed by us 2026-11-11) | only `Response.json` exists |
 | [`0020-process-tolerate-a-null-argv-and-environ.patch`](porffor-patches/0020-process-tolerate-a-null-argv-and-environ.patch) | null argv and environ | ours | none needed: only an embedding host that runs `clearenv()` (sproutd's template) reaches it | `node:process` init reads `porf_argv[i]` and `environ[i]` without a null check |
-| [`0021-json-a-wide-JSON-string-is-sized-by-its-own-length-P.patch`](porffor-patches/0021-json-a-wide-JSON-string-is-sized-by-its-own-length-P.patch) | JSON wide strings (P9) | upstream | [#464](https://github.com/CanadaHonk/porffor/issues/464), open (filed by us 2026-11-11) | `JSON.parse` of 6,000 objects containing `"naïve 中文"` in a 316 KB document dies (signal 138/139): wide strings are sized by the whole document |
-| [`0022-codegen-shared-dispatch-arguments-are-evaluated-in-o.patch`](porffor-patches/0022-codegen-shared-dispatch-arguments-are-evaluated-in-o.patch) | dispatch argument order (P10) | upstream | [#454](https://github.com/CanadaHonk/porffor/issues/454), open, same bug (filed by us 2026-11-08). Related, different paths: [#437](https://github.com/CanadaHonk/porffor/issues/437), [#438](https://github.com/CanadaHonk/porffor/issues/438), [#448](https://github.com/CanadaHonk/porffor/issues/448) | `x.toString("utf8", i, i += n)` on an untyped `x` reads `i` after the increment on arm64 |
-| [`0023-codegen-a-written-class-declaration-initialises-its-.patch`](porffor-patches/0023-codegen-a-written-class-declaration-initialises-its-.patch) | written class declaration (P11) | upstream | [#457](https://github.com/CanadaHonk/porffor/issues/457), open, same bug (filed by us 2026-11-08) | `class A {}; A = A` leaves `A` undefined; drizzle-orm's `(SQL \|\| (SQL = {}))` merge dies. Alpha 24 and 25: a decorated or boxed class is skipped (plain code now, no per-tree anchor choice) |
-| [`0024-codegen-the-right-operand-of-and-is-generated-as-a-b.patch`](porffor-patches/0024-codegen-the-right-operand-of-and-is-generated-as-a-b.patch) | logical right operand is a branch (P13) | upstream | [#456](https://github.com/CanadaHonk/porffor/issues/456), open, same bug (filed by us 2026-11-08) | in a function, `let o = 1; o \|\| (o = {}); typeof o` answers `"object"` |
-| [`0025-date-Date.parse-takes-HH-and-HHmm-offsets-as-well-as.patch`](porffor-patches/0025-date-Date.parse-takes-HH-and-HHmm-offsets-as-well-as.patch) | `Date.parse` offsets (P12) | upstream | [#455](https://github.com/CanadaHonk/porffor/issues/455), open, same bug (filed by us 2026-11-08). The colon form was [#387](https://github.com/CanadaHonk/porffor/issues/387), ours, closed | `new Date("2026-11-08 14:48:19.097+00")` and `...+0000` are `NaN` |
-| [`0026-security-compiled-code-may-not-name-the-compiler-s-i.patch`](porffor-patches/0026-security-compiled-code-may-not-name-the-compiler-s-i.patch) | refuse the compiler's intrinsics in compiled app code (`refuse.js`) | ours | none needed | `Porffor.c` templates go verbatim into the C output and the other `Porffor.*` / `__Name_x` intrinsics are as raw; the identifiers `Porffor` and `__Name_x` (Name a builtin namespace; `__zod_x`, `__COMPILER_RUNTIME` and the like are the program's own and pass) are refused on the AST of every module that is not the entry, the runtime or the shared prelude, and of every compile-time `eval`, `Function` and `vm` source; the error carries `SB_INPUT_REFUSED`; `--sb-allow-intrinsics` for the platform's own template compile |
-| [`0027-codegen-block-function-declarations-reach-a-fixpoint.patch`](porffor-patches/0027-codegen-block-function-declarations-reach-a-fixpoint.patch) | block function order (P15) | upstream | not filed (the coordinator decides; minimal repro in packages #299) | a strict block moves each function declaration up to just before its first use in ONE pass; a function moved up can mention one the pass had already left alone, so a callee ends behind its caller, is not declared when the caller generates its nested closures, is never marked referenced and is dropped: the call throws a TypeError with no message. Alchemy v2 Workers hit it |
-| [`0028-date-Date.parse-takes-the-en-US-locale-shape-RFC-282.patch`](porffor-patches/0028-date-Date.parse-takes-the-en-US-locale-shape-RFC-282.patch) | `Date.parse` locale and RFC 2822 shapes (P16) | upstream | not filed | `new Date(d.toLocaleString("en-US", { timeZone }))` is `NaN`: the string is `11/25/2026, 6:22:39 PM`. A tolerant fallback takes M/D/YYYY and YYYY/M/D with h:mm[:ss] and AM or PM, `YYYY-MM-DD hh:mm`, `Month D, YYYY`, `D Month YYYY`, with an optional weekday, zone name and +hhmm offset; the weekday parser read `GMT+0100` and dropped the offset |
-| [`0029-object-storing-an-object-with-no-toString-into-an-ar.patch`](porffor-patches/0029-object-storing-an-object-with-no-toString-into-an-ar.patch) | array store by string index (P17) | upstream | not filed | `a["2"] = Object.create(null)` threw "Cannot convert an object to primitive": a `fastAnd` evaluated `1 / value` for a non-number. Every Hono app with a `:param` route failed on every request (RegExpRouter) |
-| [`0030-builtins-regenerate-compiler-builtins_precompiled.js.patch`](porffor-patches/0030-builtins-regenerate-compiler-builtins_precompiled.js.patch) | regenerated `builtins_precompiled.js` | generated | n/a | the precompiled builtin table, which upstream tracks; `apply` skips this patch and regenerates it, `verify` fails when it is stale |
+| [`0021-codegen-shared-dispatch-arguments-are-evaluated-in-o.patch`](porffor-patches/0021-codegen-shared-dispatch-arguments-are-evaluated-in-o.patch) | dispatch argument order (P10) | upstream | [#454](https://github.com/CanadaHonk/porffor/issues/454), open, same bug (filed by us 2026-11-08). Related, different paths: [#437](https://github.com/CanadaHonk/porffor/issues/437), [#438](https://github.com/CanadaHonk/porffor/issues/438), [#448](https://github.com/CanadaHonk/porffor/issues/448) | `x.toString("utf8", i, i += n)` on an untyped `x` reads `i` after the increment on arm64 |
+| [`0022-codegen-a-written-class-declaration-initialises-its-.patch`](porffor-patches/0022-codegen-a-written-class-declaration-initialises-its-.patch) | written class declaration (P11) | upstream | [#457](https://github.com/CanadaHonk/porffor/issues/457), open, same bug (filed by us 2026-11-08) | `class A {}; A = A` leaves `A` undefined; drizzle-orm's `(SQL \|\| (SQL = {}))` merge dies. Alpha 24 and 25: a decorated or boxed class is skipped (plain code now, no per-tree anchor choice) |
+| [`0023-codegen-the-right-operand-of-and-is-generated-as-a-b.patch`](porffor-patches/0023-codegen-the-right-operand-of-and-is-generated-as-a-b.patch) | logical right operand is a branch (P13) | upstream | [#456](https://github.com/CanadaHonk/porffor/issues/456), open, same bug (filed by us 2026-11-08) | in a function, `let o = 1; o \|\| (o = {}); typeof o` answers `"object"` |
+| [`0024-date-Date.parse-takes-HH-and-HHmm-offsets-as-well-as.patch`](porffor-patches/0024-date-Date.parse-takes-HH-and-HHmm-offsets-as-well-as.patch) | `Date.parse` offsets (P12) | upstream | [#455](https://github.com/CanadaHonk/porffor/issues/455), open, same bug (filed by us 2026-11-08). The colon form was [#387](https://github.com/CanadaHonk/porffor/issues/387), ours, closed | `new Date("2026-11-08 14:48:19.097+00")` and `...+0000` are `NaN` |
+| [`0025-security-compiled-code-may-not-name-the-compiler-s-i.patch`](porffor-patches/0025-security-compiled-code-may-not-name-the-compiler-s-i.patch) | refuse the compiler's intrinsics in compiled app code (`refuse.js`) | ours | none needed | `Porffor.c` templates go verbatim into the C output and the other `Porffor.*` / `__Name_x` intrinsics are as raw; the identifiers `Porffor` and `__Name_x` (Name a builtin namespace; `__zod_x`, `__COMPILER_RUNTIME` and the like are the program's own and pass) are refused on the AST of every module that is not the entry, the runtime or the shared prelude, and of every compile-time `eval`, `Function` and `vm` source; the error carries `SB_INPUT_REFUSED`; `--sb-allow-intrinsics` for the platform's own template compile |
+| [`0026-date-Date.parse-takes-the-en-US-locale-shape-RFC-282.patch`](porffor-patches/0026-date-Date.parse-takes-the-en-US-locale-shape-RFC-282.patch) | `Date.parse` locale and RFC 2822 shapes (P16) | upstream | not filed | `new Date(d.toLocaleString("en-US", { timeZone }))` is `NaN`: the string is `11/25/2026, 6:22:39 PM`. A tolerant fallback takes M/D/YYYY and YYYY/M/D with h:mm[:ss] and AM or PM, `YYYY-MM-DD hh:mm`, `Month D, YYYY`, `D Month YYYY`, with an optional weekday, zone name and +hhmm offset; the weekday parser read `GMT+0100` and dropped the offset |
+| [`0027-object-storing-an-object-with-no-toString-into-an-ar.patch`](porffor-patches/0027-object-storing-an-object-with-no-toString-into-an-ar.patch) | array store by string index (P17) | upstream | not filed | `a["2"] = Object.create(null)` threw "Cannot convert an object to primitive": a `fastAnd` evaluated `1 / value` for a non-number. Every Hono app with a `:param` route failed on every request (RegExpRouter) |
+| [`0028-builtins-regenerate-compiler-builtins_precompiled.js.patch`](porffor-patches/0028-builtins-regenerate-compiler-builtins_precompiled.js.patch) | regenerated `builtins_precompiled.js` | generated | n/a | the precompiled builtin table, which upstream tracks; `apply` skips this patch and regenerates it, `verify` fails when it is stale |
 
-Counts: 29 patches + 1 generated: 15 upstream (14 passes; 10 with an issue, #454 to #457 and #459 to #464, all open with no fix or PR; P15, P16 and P17 are not filed), 14 ours.
+Counts: 27 patches + 1 generated: 12 upstream (9 with an issue, #454 to #457 and #459 to #463, all open with no fix or PR; `repeat`, P16 and P17 are not filed), 15 ours.
+(Alpha 25 and earlier said 15 upstream and 14 ours; counting the `Class:` trailers gives 14 and 15, so the line was off by one.)
 No upstream PR covers any of them; Porffor's AI policy does not allow LLM-written PR text, so any PR needs a human-written description.
 
 ## Upgrading to a new alpha
@@ -83,6 +82,50 @@ No upstream PR covers any of them; Porffor's AI policy does not allow LLM-writte
 6. Requalify at the tier the change needs (sproutd's `requalify.sh`; a new alpha is the porffor tier, see "Requal tiers").
 
 Dropping or adding a pass is the same flow: `git rebase -i` in the checkout, `export`, `vendor`.
+
+## Alpha 26 check (2026-11-27)
+
+Alpha 26 is nineteen commits on alpha 25 (tag `alpha-26`, `8037e56`, upstream `main`, 2026-11-27): +1,031/-188 lines in `compiler/` and `runtime/`
+(`render.js` +109, `codegen.js` +133, `builtins/_internal_object.ts` +86, `builtins/string.ts`, `regexp.ts`, `json.ts`, and a new `runtime/node/ffi.js`, 632 lines).
+It is performance work (string `+=` on object properties through ropes, inlined `strcat` and `porf_cmp`, `fastPush` through `porf_arr_push`, a new
+`__porffor_rope` heap type), `node:ffi`, and the fixes below.
+
+`apply --base alpha-26` applied 27 of the 29 patches and stopped on two, 0017 and 0021; 0027 applied cleanly but upstream fixed it, so it is dropped too (**one rebased, two dropped, no `ours` patch lost**):
+
+| Patch | Upstream commit | Resolution |
+| --- | --- | --- |
+| 0017 megamorphic cache freeze | `a360d7f2` builtins/object: tell apart keys sharing a hash (megamorphic cache entries now carry the key pointer, `icStoreMega` takes a `keyPtr`) | rebased: `icStoreMega(shape, hash, keyPtr, holder, i, epoch)` keeps its new signature and our `if (icMegaFrozen != 0) return;` stays its first line |
+| 0021 JSON wide strings (P9, [#464](https://github.com/CanadaHonk/porffor/issues/464)) | `d648a51e` builtins/json: wide strings sized to their closing quote | **dropped**: stock alpha 26 parses the 6,000-object repro (the test in `patch.test.ts` stays and passes without the patch) |
+| 0027 block function order (P15, packages #299) | `e12413a4` codegen: written function declarations generate after the hoisted run | **dropped**: the Alchemy-shape repro prints `ok` and `b` on stock alpha 26 and threw a TypeError on stock alpha 25 (its test in `miscompile.test.ts` stays and passes without the patch) |
+
+Upstream commits that touch our areas and need no change in the series: `f80cfa57` (large links go through a response file) and `6e3dc3a6` (no spread pushes of
+unit-sized arrays) are for sproutd's split link, see sproutd's note below; `d84af367` (ropes) adds a GC scan case for the new type, which our collector hooks do not anchor on;
+`0a081512` (`memberCall`), `8037e56d` (`porf_cmp`) and `a8438e53` (inline `porf_str_concat`) touch no anchor.
+
+Test changes the new alpha needed: the P14 test (globals unit byte for byte across apps) compiled three apps whose builtin sets differ without the anchor sproutd uses.
+On alpha 26 the property-key strings are in the builtins unit's data, laid out by content, so a builtin only one app links (`parseInt`) moved the globals unit's string offsets.
+The test's template now references the builtins its apps use, as sproutd's builtin anchor does. The requalification (below) is what proves the real template; the standalone
+channel check lists `alpha-25` as no longer supported.
+
+Repros on the **unpatched** alpha 26 tree (macOS arm64, `bun runtime/index.js native`), 2026-11-27:
+
+| Issue | Stock alpha 26 | Patched |
+| --- | --- | --- |
+| [#454](https://github.com/CanadaHonk/porffor/issues/454) | still fails: `decode(Buffer.from("hello world"), 6, 5)` gives `\|11`, `pick("abcdef", 2, 3)` gives `\|5` | `world\|11`, `cde\|5` |
+| [#455](https://github.com/CanadaHonk/porffor/issues/455) | still fails: `+00` and `+0000` are `NaN` | the epoch ms |
+| [#456](https://github.com/CanadaHonk/porffor/issues/456) | still fails: `object 1`, `object 1` | `number 1`, `function 1` |
+| [#457](https://github.com/CanadaHonk/porffor/issues/457) | still fails: `A = A` makes `A` `undefined`; the merge pattern throws | `function`, `function 9` |
+| [#459](https://github.com/CanadaHonk/porffor/issues/459) | still quadratic: 20,000 to 160,000 pairs take 61, 298, 980, 3,145 ms (about 3.2 times per doubling) | 8, 15, 38, 86 ms |
+| [#460](https://github.com/CanadaHonk/porffor/issues/460) | still quadratic: 50,000 to 200,000 pairs, function replacement 649, 2,924, 21,646 ms; template 1,264, 6,881, 41,777 ms | 25, 46, 92 ms; 65, 158, 304 ms |
+| [#461](https://github.com/CanadaHonk/porffor/issues/461) | still fails: `é ж É` unchanged | `É Ж é` |
+| [#462](https://github.com/CanadaHonk/porffor/issues/462) | still fails: `const select = 1` is `redefinition of 'select' as different kind of symbol` (macOS `sys/_select.h`; glibc not run on this Mac) | `1` |
+| [#463](https://github.com/CanadaHonk/porffor/issues/463) | still fails: `undefined undefined` | `function function` |
+| [#464](https://github.com/CanadaHonk/porffor/issues/464) | **fixed** by `d648a51e`: 6,000 objects with `"naïve 中文"` parse in 27 ms | no patch |
+| P15 (packages #299, not filed) | **fixed** by `e12413a4` | no patch |
+| P16 (not filed) | still fails: `new Date(d.toLocaleString("en-US", { timeZone: "UTC" }))` is `NaN` | the epoch second |
+| P17 (not filed) | still fails: `a["2"] = Object.create(null)` throws "Cannot convert an object to primitive" | `object` |
+
+All ten issues are still open (#464 now has a fix upstream; it is still open and has one comment). We do not post on upstream; whether to close or comment is the user's call.
 
 ## Alpha 25 check (2026-11-17)
 

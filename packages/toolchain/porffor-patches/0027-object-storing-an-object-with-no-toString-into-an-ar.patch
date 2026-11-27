@@ -19,10 +19,10 @@ Upstream: not filed
  1 file changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/compiler/builtins/_internal_object.ts b/compiler/builtins/_internal_object.ts
-index 32d99928ef24746dd0bd410fd3b04fafa9cc43dd..bfc1bc98f60c25b37c36fb6edeaea9cb738e1c81 100644
+index a026240699a966c86f5bc3743d9cda545a174827..ef572982f49a8cc54e531cb3f55deb999e7fda21 100644
 --- a/compiler/builtins/_internal_object.ts
 +++ b/compiler/builtins/_internal_object.ts
-@@ -1675,7 +1675,7 @@ export const __Porffor_object_set = (_obj: any, key: any, value: any): any => {
+@@ -1735,7 +1735,7 @@ export const __Porffor_object_set = (_obj: any, key: any, value: any): any => {
        if (needed > Porffor.IR.loadI32(arr, 0)) Porffor.IR.storeI32(arr, 0, needed);
  
        const entry: i32 = entries + index * 8;
@@ -31,7 +31,7 @@ index 32d99928ef24746dd0bd410fd3b04fafa9cc43dd..bfc1bc98f60c25b37c36fb6edeaea9cb
          Porffor.IR.storeU64(entry, 0, -2243003720663040);
        } else {
          Porffor.IR.storeJv(entry, 0, value);
-@@ -1940,7 +1940,7 @@ export const __Porffor_object_setStrict = (_obj: any, key: any, value: any): any
+@@ -2000,7 +2000,7 @@ export const __Porffor_object_setStrict = (_obj: any, key: any, value: any): any
        if (needed > Porffor.IR.loadI32(arr, 0)) Porffor.IR.storeI32(arr, 0, needed);
  
        const entry: i32 = entries + index * 8;

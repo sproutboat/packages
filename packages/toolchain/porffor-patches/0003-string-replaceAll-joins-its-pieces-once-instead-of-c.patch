@@ -16,10 +16,10 @@ Upstream: https://github.com/CanadaHonk/porffor/issues/459
  1 file changed, 6 insertions(+), 4 deletions(-)
 
 diff --git a/compiler/builtins/string.ts b/compiler/builtins/string.ts
-index d40813d6f15bdfbe41c7f9706f8adba1106aef6e..59a0728b3f123bc8228bb04c1639a9648907a0fd 100644
+index 09e4c32d998c4f6584f4581a7473df1698bd8d67..f059b39f336d4bc3397ae437f4aafaab7acd2b57 100644
 --- a/compiler/builtins/string.ts
 +++ b/compiler/builtins/string.ts
-@@ -1263,7 +1263,8 @@ export const __Porffor_string_replaceAll = (str: any, searchValue: any, replaceV
+@@ -1183,7 +1183,8 @@ export const __Porffor_string_replaceAll = (str: any, searchValue: any, replaceV
    match[0] = searchValue;
    match.input = str;
  
@@ -29,7 +29,7 @@ index d40813d6f15bdfbe41c7f9706f8adba1106aef6e..59a0728b3f123bc8228bb04c1639a964
    let appendIndex: i32 = 0;
    let searchIndex: i32 = 0;
    let matched: boolean = false;
-@@ -1274,8 +1275,8 @@ export const __Porffor_string_replaceAll = (str: any, searchValue: any, replaceV
+@@ -1194,8 +1195,8 @@ export const __Porffor_string_replaceAll = (str: any, searchValue: any, replaceV
  
      matched = true;
      match.index = matchIndex;
@@ -40,7 +40,7 @@ index d40813d6f15bdfbe41c7f9706f8adba1106aef6e..59a0728b3f123bc8228bb04c1639a964
  
      appendIndex = matchIndex + searchLen;
      if (searchLen == 0) {
-@@ -1288,7 +1289,8 @@ export const __Porffor_string_replaceAll = (str: any, searchValue: any, replaceV
+@@ -1208,7 +1209,8 @@ export const __Porffor_string_replaceAll = (str: any, searchValue: any, replaceV
    }
  
    if (!matched) return str;

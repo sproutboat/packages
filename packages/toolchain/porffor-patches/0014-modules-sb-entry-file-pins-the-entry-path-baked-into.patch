@@ -16,10 +16,10 @@ Pass: patchStableEntryPath (P7)
  1 file changed, 1 insertion(+), 1 deletion(-)
 
 diff --git a/compiler/modules.js b/compiler/modules.js
-index 20cde9a9a07190ff4bda251633af51563b926961..7ec2fb8d50d34d33f3607a1f78915531863073c0 100644
+index d2dabf37509b6dc7e595efbf638d3a6e11184a9a..b689e2e4d817f8e957b87abe851c5a2f62161abc 100644
 --- a/compiler/modules.js
 +++ b/compiler/modules.js
-@@ -1237,7 +1237,7 @@ export default (entrySource, entryFile, opts = {}) => {
+@@ -1239,7 +1239,7 @@ export default (entrySource, entryFile, opts = {}) => {
      const walk = node => {
        switch (node.type) {
          case 'Identifier': {

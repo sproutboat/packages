@@ -19,7 +19,7 @@ Pass: patchGlobalsPin (P14)
  1 file changed, 7 insertions(+)
 
 diff --git a/compiler/modules.js b/compiler/modules.js
-index 51cdcaeb3640d906493a58b6ef2ddb095024a306..20cde9a9a07190ff4bda251633af51563b926961 100644
+index c2c6c3aa541bbb92e27e0f24f7a2724822d2d630..d2dabf37509b6dc7e595efbf638d3a6e11184a9a 100644
 --- a/compiler/modules.js
 +++ b/compiler/modules.js
 @@ -1613,6 +1613,13 @@ export default (entrySource, entryFile, opts = {}) => {

@@ -125,7 +125,7 @@ test("not refused, and harmless: names built at run time never reach the C", asy
     const r = await compile(worker);
     expect(r.reached, worker).toBe(false);
   }
-});
+}, 60_000);
 
 test("an ordinary app compiles: strings, comments, flags named like dunders and every plain builtin pass", async () => {
   const r = await compile(

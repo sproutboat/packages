@@ -14,10 +14,10 @@ Pass: patchClassUnit (P1)
  1 file changed, 8 insertions(+), 1 deletion(-)
 
 diff --git a/compiler/codegen.js b/compiler/codegen.js
-index 5ab1e9e3566ecc23a533ef8096eb153663624d71..bde50f73ca7bf7737df625c9a6316390a707b13f 100644
+index 16f765a0b8913084e6eb868f53ed78160c63a778..b1dfcd97f6e947cd55ebdbc768d5403db02ade76 100644
 --- a/compiler/codegen.js
 +++ b/compiler/codegen.js
-@@ -5409,7 +5409,11 @@ const classSuperExpr = () => ({
+@@ -5438,7 +5438,11 @@ const classSuperExpr = () => ({
    ]
  });
  
@@ -29,7 +29,7 @@ index 5ab1e9e3566ecc23a533ef8096eb153663624d71..bde50f73ca7bf7737df625c9a6316390
    const expr = decl.type === 'ClassExpression';
    const name = decl.id.name;
    const body = decl.body.body;
-@@ -5466,6 +5470,9 @@ const declareClass = (scope, decl) => {
+@@ -5495,6 +5499,9 @@ const declareClass = (scope, decl) => {
  };
  
  const generateClass = (scope, decl) => {
@@ -39,7 +39,7 @@ index 5ab1e9e3566ecc23a533ef8096eb153663624d71..bde50f73ca7bf7737df625c9a6316390
    const expr = decl.type === 'ClassExpression';
    if (!expr && !classHasDefinitionSideEffects(decl) && (decl._refs ?? 0) === 0) {
      return valUndefined();
-@@ -6148,7 +6155,7 @@ const generateFunc = (scope, decl, forceNoExpr = false) => {
+@@ -6239,7 +6246,7 @@ const generateFunc = (scope, decl, forceNoExpr = false) => {
      strict: decl.strict ?? scope.strict,
      usesArguments: decl._usesArguments,
      ast: decl,

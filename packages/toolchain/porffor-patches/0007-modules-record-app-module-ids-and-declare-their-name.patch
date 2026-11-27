@@ -15,7 +15,7 @@ Pass: patchAppModuleIds (P6, modules.js)
  1 file changed, 7 insertions(+), 1 deletion(-)
 
 diff --git a/compiler/modules.js b/compiler/modules.js
-index ee5767e202b585380f218ba81946c230e1cfe875..415c7d05ed34a636b550b8a9925162648e9f878b 100644
+index cea9dee19b9048248828fe9a414685573f7c65f8..9a2b10a64e4058032054a6815d6f8c9a68d1bebd 100644
 --- a/compiler/modules.js
 +++ b/compiler/modules.js
 @@ -245,6 +245,10 @@ const dataSource = url => {

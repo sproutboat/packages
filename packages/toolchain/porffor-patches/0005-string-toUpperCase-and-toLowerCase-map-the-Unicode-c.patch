@@ -18,10 +18,10 @@ Upstream: https://github.com/CanadaHonk/porffor/issues/461
  1 file changed, 20 insertions(+), 4 deletions(-)
 
 diff --git a/compiler/builtins/string.ts b/compiler/builtins/string.ts
-index 42cd32bf7a228545165edaf0cc6764afaafde0ee..6176f4eb25ecba593a16e59299172ece692d84ac 100644
+index 0712babdc2bb80303653b9a496dab2f7514c7586..f1dfbac91c6a79ad4a87b3a1d44170cca53b4084 100644
 --- a/compiler/builtins/string.ts
 +++ b/compiler/builtins/string.ts
-@@ -153,6 +153,22 @@ export const __Porffor_string_get = (str: any, index: number): any => {
+@@ -73,6 +73,22 @@ export const __Porffor_string_get = (str: any, index: number): any => {
    return out;
  };
  
@@ -44,7 +44,7 @@ index 42cd32bf7a228545165edaf0cc6764afaafde0ee..6176f4eb25ecba593a16e59299172ece
  export const __String_prototype_toUpperCase = function (this: string) {
    // todo: unicode not just ascii
    const len: i32 = this.length;
-@@ -168,7 +184,7 @@ export const __String_prototype_toUpperCase = function (this: string) {
+@@ -88,7 +104,7 @@ export const __String_prototype_toUpperCase = function (this: string) {
      let chr: i32 = Porffor.IR.loadU16(i, 4);
      i += 2;
  
@@ -53,7 +53,7 @@ index 42cd32bf7a228545165edaf0cc6764afaafde0ee..6176f4eb25ecba593a16e59299172ece
  
      Porffor.IR.storeU16(j, 4, chr);
      j += 2;
-@@ -190,7 +206,7 @@ export const __ByteString_prototype_toUpperCase = function (this: bytestring) {
+@@ -110,7 +126,7 @@ export const __ByteString_prototype_toUpperCase = function (this: bytestring) {
    while (i < endPtr) {
      let chr: i32 = Porffor.IR.loadU8(i++, 4);
  
@@ -62,7 +62,7 @@ index 42cd32bf7a228545165edaf0cc6764afaafde0ee..6176f4eb25ecba593a16e59299172ece
  
      Porffor.IR.storeU8(j++, 4, chr);
    }
-@@ -213,7 +229,7 @@ export const __String_prototype_toLowerCase = function (this: string) {
+@@ -133,7 +149,7 @@ export const __String_prototype_toLowerCase = function (this: string) {
      let chr: i32 = Porffor.IR.loadU16(i, 4);
      i += 2;
  
@@ -71,7 +71,7 @@ index 42cd32bf7a228545165edaf0cc6764afaafde0ee..6176f4eb25ecba593a16e59299172ece
  
      Porffor.IR.storeU16(j, 4, chr);
      j += 2;
-@@ -235,7 +251,7 @@ export const __ByteString_prototype_toLowerCase = function (this: bytestring) {
+@@ -155,7 +171,7 @@ export const __ByteString_prototype_toLowerCase = function (this: bytestring) {
    while (i < endPtr) {
      let chr: i32 = Porffor.IR.loadU8(i++, 4);
  

@@ -127,7 +127,6 @@ test("the shipped tree carries every patch's edit", async () => {
     "compiler/builtins/promise.ts",
     "compiler/builtins/string.ts",
     "compiler/builtins/regexp.ts",
-    "compiler/builtins/json.ts",
     "compiler/builtins/date.ts",
     "compiler/builtins/_internal_object.ts",
     "compiler/builtins_precompiled.js",
@@ -143,7 +142,7 @@ test("the shipped tree carries every patch's edit", async () => {
     ["compiler/codegen.js", "#class_computed_prop_${unitOf(scope)}_"],
     ["compiler/codegen.js", "sproutboat P10: shared dispatch arguments are evaluated in order"],
     ["compiler/codegen.js", "sproutboat P13: the right operand of a logical expression is a branch"],
-    // P11 on alpha 25 leaves a decorated or boxed class alone.
+    // P11 on alpha 26 leaves a decorated or boxed class alone.
     ["compiler/codegen.js", "if (!expr && decl._writes && !classDecorators && !decl._boxed) {"],
     ["compiler/modules.js", "sproutboat P6: app-owned modules"],
     ["compiler/modules.js", "sproutboat P4: prelude-declared names override runtime globals"],
@@ -157,11 +156,10 @@ test("the shipped tree carries every patch's edit", async () => {
     ["compiler/render.js", "sproutboat P3: a unit's segments by content"],
     ["compiler/render.js", "sproutboat P6: app-module globals last"],
     ["compiler/render.js", "sproutboat: glibc select"],
-    // alpha 25's own text, untouched by any patch: js functions carry PORF_CC (swiftcall on clang arm64).
+    // alpha 26's own text, untouched by any patch: js functions carry PORF_CC (swiftcall on clang arm64).
     ["compiler/render.js", "#define PORF_CC __attribute__((swiftcall))"],
     ["compiler/builtins/_internal_object.ts", "sproutboat: frozen megamorphic cache"],
     ["compiler/builtins/promise.ts", "sproutboat: per-request cpu"],
-    ["compiler/builtins/json.ts", "sproutboat P9: a wide JSON string is sized by its own length"],
     ["compiler/builtins/date.ts", "sproutboat P12: UTC offsets without a colon"],
     ["compiler/index.js", "SB_EXTRA_LINK"],
     ["compiler/index.js", "SB_EXTRA_CFLAGS"],
@@ -174,7 +172,7 @@ test("the shipped tree carries every patch's edit", async () => {
     ["compiler/builtins/regexp.ts", "export const __Porffor_regex_replaceCallback = "],
   ] as const)
     expect(text[f], `${marker} in ${f}`).toContain(marker);
-  // alpha 25's own file (the TypeScript lowering) is untouched by every patch.
+  // alpha 26's own file (the TypeScript lowering) is untouched by every patch.
   expect(await Bun.file(join(root, "compiler/typescript.js")).exists()).toBe(true);
   // The table was regenerated after the builtin edits: it carries the replaceAll rewrite and the mega freeze.
   expect(text["compiler/builtins_precompiled.js"]).toContain("replaceAll");
@@ -349,7 +347,7 @@ test("P8: the shared dispatch functions sit in the unit that asked, under stable
   expect(new TextDecoder().decode(run.stdout).trim()).toBe("ABab  abb c c  2,3");
 }, 180_000);
 
-test("P9: JSON.parse of a large document with wide strings runs on the shipped alpha 25 tree", async () => {
+test("JSON.parse of a large document with wide strings runs on the shipped alpha 26 tree (was P9, fixed upstream by d648a51e)", async () => {
   const root = await patched();
   const work = join(root, "work-p9");
   await mkdir(work);
@@ -380,12 +378,12 @@ test("P9: JSON.parse of a large document with wide strings runs on the shipped a
 
 test("P14: runtime globals are pinned to the template's set, and a free reference outside it is a compile error", async () => {
   const root = await patched();
-  // The shared prelude owns performance (an assignment) and process (a lazy accessor, `Object.defineProperty(globalThis, 'process', ...)`),
-  // both P4, the way sproutd's does; the template names MessageEvent.
+  // The shared prelude owns performance and process (P4, as in sproutd) and names MessageEvent and every builtin the apps use:
+  // alpha 26 keeps key strings in the builtins unit, laid out by content, so a builtin only one app links would move the globals unit.
   const prelude =
     "globalThis.performance = { now() { return 1; }, timeOrigin: 0 };\n" +
     "Object.defineProperty(globalThis, 'process', { get() { return { env: {}, platform: 'linux' }; }, set(v) {}, configurable: true });\n" +
-    "globalThis.__sbAnchor = () => [ MessageEvent, global ];\nexport {};\n";
+    'globalThis.__sbAnchor = () => [ MessageEvent, global, parseInt, parseFloat, JSON.stringify, " x".trimStart(), [] instanceof Array, console.log(1, 2) ];\nexport {};\n';
   const compile = async (name: string, body: string, pin?: string[]) => {
     const work = join(root, name);
     await mkdir(work);

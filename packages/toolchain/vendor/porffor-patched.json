@@ -1,10 +1,10 @@
 {
   "upstream": {
     "repo": "https://github.com/CanadaHonk/porffor",
-    "channel": "alpha-25",
-    "tag": "alpha-25",
-    "commit": "c9af40c8c6913e04d491412ae9fe0f34b97b51df",
-    "npmVersion": "0.0.0-alpha.25"
+    "channel": "alpha-26",
+    "tag": "alpha-26",
+    "commit": "8037e56d2b5cdb42cc57625a32766e49b63ce90b",
+    "npmVersion": "0.0.0-alpha.26"
   },
   "series": {
     "dir": "packages/toolchain/porffor-patches",
@@ -29,27 +29,25 @@
       "0018-render-select-is-a-reserved-C-name.patch",
       "0019-fetch-Response.redirect-and-Response.error.patch",
       "0020-process-tolerate-a-null-argv-and-environ.patch",
-      "0021-json-a-wide-JSON-string-is-sized-by-its-own-length-P.patch",
-      "0022-codegen-shared-dispatch-arguments-are-evaluated-in-o.patch",
-      "0023-codegen-a-written-class-declaration-initialises-its-.patch",
-      "0024-codegen-the-right-operand-of-and-is-generated-as-a-b.patch",
-      "0025-date-Date.parse-takes-HH-and-HHmm-offsets-as-well-as.patch",
-      "0026-security-compiled-code-may-not-name-the-compiler-s-i.patch",
-      "0027-codegen-block-function-declarations-reach-a-fixpoint.patch",
-      "0028-date-Date.parse-takes-the-en-US-locale-shape-RFC-282.patch",
-      "0029-object-storing-an-object-with-no-toString-into-an-ar.patch",
-      "0030-builtins-regenerate-compiler-builtins_precompiled.js.patch"
+      "0021-codegen-shared-dispatch-arguments-are-evaluated-in-o.patch",
+      "0022-codegen-a-written-class-declaration-initialises-its-.patch",
+      "0023-codegen-the-right-operand-of-and-is-generated-as-a-b.patch",
+      "0024-date-Date.parse-takes-HH-and-HHmm-offsets-as-well-as.patch",
+      "0025-security-compiled-code-may-not-name-the-compiler-s-i.patch",
+      "0026-date-Date.parse-takes-the-en-US-locale-shape-RFC-282.patch",
+      "0027-object-storing-an-object-with-no-toString-into-an-ar.patch",
+      "0028-builtins-regenerate-compiler-builtins_precompiled.js.patch"
     ],
-    "sha256": "8fba6dfc2afe7806d51ed8430d57170469c64e8a44557163820a5e5a8cd95057"
+    "sha256": "a8b9d11911205fce2ffc13f607261863146dc2791859d6662b2d59e8b7d9ac66"
   },
   "tar": {
-    "sha256": "ec457623f5e7558cd2cf4887d0d0a2804d93dc009d4b94b86d7a22e24a79b237",
-    "bytes": 6369792
+    "sha256": "01a2c5fd5b1eb560f2feb3bd956438daad1f8a9f32a97689f319383bed9907ee",
+    "bytes": 6410240
   },
   "tarball": {
     "file": "porffor-patched.tar.gz",
-    "sha256": "0e2685a66f50e73a5b16f7f23991cf82bec32dfc3962d515aac8d718f632b67c",
-    "bytes": 1598055,
+    "sha256": "2a61e769634a64bcd178320a4b69c1336c014a5f5767d61074d023caf9ee32c9",
+    "bytes": 1615306,
     "compressor": "bun 1.4.4 gzipSync level 9"
   }
 }

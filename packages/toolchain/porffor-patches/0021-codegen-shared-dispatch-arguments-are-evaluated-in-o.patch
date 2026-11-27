@@ -19,10 +19,10 @@ Upstream: https://github.com/CanadaHonk/porffor/issues/454
  1 file changed, 2 insertions(+), 1 deletion(-)
 
 diff --git a/compiler/codegen.js b/compiler/codegen.js
-index 96582f4c5c3bfba75a6f9cf61db78e0b199d796e..4bb0e7012eb88d43348b4c69dc5496d3b27236bf 100644
+index 093d818682e9e676a3ad83439f6aeae9526a96c2..5384292d0718d2793be04bce04a0ae4801f68e73 100644
 --- a/compiler/codegen.js
 +++ b/compiler/codegen.js
-@@ -2351,7 +2351,8 @@ const generateCall = (scope, decl) => {
+@@ -2381,7 +2381,8 @@ const generateCall = (scope, decl) => {
            Object.keys(protoBC).length > 1 && !decl.arguments.some(x => x?.type === 'SpreadElement')) {
            const params = decl.arguments.map((_, i) => 'a' + i);
            const func = sharedFunc(`((${[ 'r', ...params ].join(', ')}) => r.${protoName}(${params.join(', ')}))`, scope, protoName + '_' + params.length);

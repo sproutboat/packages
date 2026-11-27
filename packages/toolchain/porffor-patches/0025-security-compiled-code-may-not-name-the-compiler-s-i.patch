@@ -30,7 +30,7 @@ Pass: refuseIntrinsics (refuse.js; modules.js, codegen.js, semantic.js)
  create mode 100644 compiler/refuse.js
 
 diff --git a/compiler/codegen.js b/compiler/codegen.js
-index ced70517a07814fb29334e4e5250a5c3a7725d51..b331d8e061a184cfaf1752ee034266c37cabe6ff 100644
+index 0787f7e12caaebbbb0b8c83254b987635134d5ee..a849c5fae6f945ace2d09ef719c677bdadabfced 100644
 --- a/compiler/codegen.js
 +++ b/compiler/codegen.js
 @@ -12,6 +12,7 @@ import { BuiltinFuncs, BuiltinVars, fullPrototypes } from './builtins.js';
@@ -41,7 +41,7 @@ index ced70517a07814fb29334e4e5250a5c3a7725d51..b331d8e061a184cfaf1752ee034266c3
  import { patternNames, appModuleIds } from './modules.js';
  import temporalPolyfillSource from './intl/temporal.js';
  import intlPolyfillSource from './intl/intl.js';
-@@ -2242,7 +2243,7 @@ const generateCall = (scope, decl) => {
+@@ -2272,7 +2273,7 @@ const generateCall = (scope, decl) => {
        const fnArgs = knowns.slice(0, -1).map(x => String(x));
        let parsed;
        try {
@@ -51,7 +51,7 @@ index ced70517a07814fb29334e4e5250a5c3a7725d51..b331d8e061a184cfaf1752ee034266c3
          if (e.name === 'SyntaxError') return internalThrow(scope, 'SyntaxError', e.message);
          throw e;
 diff --git a/compiler/modules.js b/compiler/modules.js
-index 7ec2fb8d50d34d33f3607a1f78915531863073c0..b8c323e08e0c9f985f8fda11b562f61c2dbf3d7f 100644
+index b689e2e4d817f8e957b87abe851c5a2f62161abc..eccae5a3a4de623d84e0d2bd76584fe7d13afb13 100644
 --- a/compiler/modules.js
 +++ b/compiler/modules.js
 @@ -1,6 +1,7 @@
@@ -80,7 +80,7 @@ index 7ec2fb8d50d34d33f3607a1f78915531863073c0..b8c323e08e0c9f985f8fda11b562f61c
  export const isEsmSource = (file, src) => {
    if (/\.m[jt]s$/.test(file) || file.startsWith('data:')) return true;
    if (/\.c[jt]s$/.test(file)) return false;
-@@ -754,6 +766,7 @@ const vmWrapper = (code, params, id) => {
+@@ -755,6 +767,7 @@ const vmWrapper = (code, params, id) => {
    let body;
    try {
      body = params ? [ { type: 'ReturnStatement', argument: parse(`(function (${params.join(',')}) {\n${code}\n})`, { module: false }).body[0].expression } ] : parse(code, { module: false }).body;
@@ -96,7 +96,7 @@ index 7ec2fb8d50d34d33f3607a1f78915531863073c0..b8c323e08e0c9f985f8fda11b562f61c
    } catch (e) {
      if (e.name !== 'SyntaxError') throw e;
      return { type: 'NewExpression', callee: ident('SyntaxError'), arguments: [ literal(e.message) ] };
-@@ -947,6 +961,7 @@ export default (entrySource, entryFile, opts = {}) => {
+@@ -949,6 +963,7 @@ export default (entrySource, entryFile, opts = {}) => {
      mod.esm = entry ? !opts.script && !opts.cjs && !/\.c[jt]s$/.test(file) : isEsmSource(file, source);
      // cjs code is a function body to node
      const ast = parse(source, { module: mod.esm, ts, topReturn: !mod.esm && !(entry && opts.script) });
