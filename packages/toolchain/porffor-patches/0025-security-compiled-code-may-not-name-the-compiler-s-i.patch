@@ -28,10 +28,10 @@ Class: ours
 Pass: refuseIntrinsics (refuse.js; modules.js, codegen.js, semantic.js)
 ---
  compiler/codegen.js  |  3 +-
- compiler/modules.js  | 21 +++++++++++++-
+ compiler/modules.js  | 33 ++++++++++++++++++++-
  compiler/refuse.js   | 69 ++++++++++++++++++++++++++++++++++++++++++++
  compiler/semantic.js |  3 +-
- 4 files changed, 93 insertions(+), 3 deletions(-)
+ 4 files changed, 105 insertions(+), 3 deletions(-)
  create mode 100644 compiler/refuse.js
 
 diff --git a/compiler/codegen.js b/compiler/codegen.js
@@ -56,7 +56,7 @@ index 0787f7e12caaebbbb0b8c83254b987635134d5ee..a849c5fae6f945ace2d09ef719c677bd
          if (e.name === 'SyntaxError') return internalThrow(scope, 'SyntaxError', e.message);
          throw e;
 diff --git a/compiler/modules.js b/compiler/modules.js
-index b689e2e4d817f8e957b87abe851c5a2f62161abc..f007948158b00112a6ab9bb4d49682091ea3fe3f 100644
+index b689e2e4d817f8e957b87abe851c5a2f62161abc..07fa07b917a2861b729132b6ca48d0b7f417613e 100644
 --- a/compiler/modules.js
 +++ b/compiler/modules.js
 @@ -1,6 +1,7 @@
@@ -109,20 +109,46 @@ index b689e2e4d817f8e957b87abe851c5a2f62161abc..f007948158b00112a6ab9bb4d4968209
      if (ts) lowerTs(ast);
      mod.body = ast.body;
      literalImports(mod.body);
-@@ -986,8 +1001,12 @@ export default (entrySource, entryFile, opts = {}) => {
+@@ -974,6 +989,12 @@ export default (entrySource, entryFile, opts = {}) => {
+     return mod;
+   };
+ 
++  // sproutboat: node:ffi is raw native access, refused for the same code that may not name Porffor.dlopen (refuse.js)
++  const refuseNative = (mod, file) => {
++    const name = file.startsWith(RUNTIME_ROOT + '/node/') ? file.slice(RUNTIME_ROOT.length + 6, -3) : null;
++    if (name !== null && isNativeBuiltin(name) && isUntrusted(mod.file, entryDir, mod.entry)) refuseNativeBuiltin(name, mod.file.startsWith('data:') ? 'a data: module' : `the module ${mod.rel}`);
++  };
++
+   // 'dynamic'/'deferred' targets are evaluated when first needed unless something imports them normally
+   const dep = (mod, node, lazy = false, as = null) => {
+     const attrs = node.attributes ?? [];
+@@ -986,6 +1007,8 @@ export default (entrySource, entryFile, opts = {}) => {
        if (!lazy) throw Object.assign(e, { unresolved: true });
        return { error: e.message, notFound: e.notFound };
      }
-+    // sproutboat: node:ffi is raw native access, refused for the same code that may not name Porffor.dlopen (refuse.js). Outside the try: it fails the compile, also for import() and require()
-+    if (file.startsWith(RUNTIME_ROOT + '/node/') && isNativeBuiltin(file.slice(RUNTIME_ROOT.length + 6, -3)) && isUntrusted(mod.file, entryDir, mod.entry)) {
-+      refuseNativeBuiltin(file.slice(RUNTIME_ROOT.length + 6, -3), mod.file.startsWith('data:') ? 'a data: module' : `the module ${mod.rel}`);
-+    }
++    // outside the try: it fails the compile, also for import() and require()
++    refuseNative(mod, file);
      // data: urls are javascript or json, esm imports check their type attribute against the module's format
--    const mime = file.startsWith('data:') ? file.slice(5, file.search(/[,;]/)) : null;
-+    const mime =file.startsWith('data:') ? file.slice(5, file.search(/[,;]/)) : null;
+     const mime = file.startsWith('data:') ? file.slice(5, file.search(/[,;]/)) : null;
      const json = file.endsWith('.json') || mime === 'application/json';
-     const url = file.startsWith('data:') ? file : 'file://' + file;
-     const formatError = mime != null && mime !== 'text/javascript' && mime !== 'application/json' ? { error: `Unknown module format: ${mime} for URL ${file}`, errorType: 'TypeError', code: 'ERR_UNKNOWN_MODULE_FORMAT' } :
+@@ -1021,8 +1044,16 @@ export default (entrySource, entryFile, opts = {}) => {
+   };
+   // names node's cjs-module-lexer finds, through reexported modules too
+   const cjsReexported = mod => mod.cjsExports.reexports.flatMap(spec => {
++    let file;
++    try {
++      file = resolve(spec, mod.file, true, runtime);
++    } catch {
++      return [];
++    }
++    // loading it would link it into the program, so this refuses outside the try below
++    refuseNative(mod, file);
+     try {
+-      const d = load(resolve(spec, mod.file, true, runtime));
++      const d = load(file);
+       return d.esm || d.cjsExports ? [ d ] : [];
+     } catch {
+       return [];
 diff --git a/compiler/refuse.js b/compiler/refuse.js
 new file mode 100644
 index 0000000000000000000000000000000000000000..569025be3215dd2489fe164c88484b91c62b928f

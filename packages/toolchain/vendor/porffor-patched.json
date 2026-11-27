@@ -38,16 +38,16 @@
       "0027-object-storing-an-object-with-no-toString-into-an-ar.patch",
       "0028-builtins-regenerate-compiler-builtins_precompiled.js.patch"
     ],
-    "sha256": "a4fe6c77cd601a4792aa5f523084fc084300888ecc1f31a3305f36b6c6c41e73"
+    "sha256": "629b8c47f31fb937987029a8235b4143db144be97d7fa2b68c40be6ad7b9d1c6"
   },
   "tar": {
-    "sha256": "2aefb68510f74a0b2dad5f68e06f9967b5679076e5b5531973bd332e5d084ba0",
+    "sha256": "4bd97c73ff687e81a6a4adef04950f76e93de5e60c57dc228cfdea18af9ce054",
     "bytes": 6413312
   },
   "tarball": {
     "file": "porffor-patched.tar.gz",
-    "sha256": "4679ee41ec58b841857dcadf652c039e5b67b6ebf46d761a96edffc8ec86d78a",
-    "bytes": 1616186,
+    "sha256": "c7166f9ac3ae28ea1b3cf55fa5b95f97a776b881bca228a9abdd7907f236f7a2",
+    "bytes": 1616375,
     "compressor": "bun 1.4.4 gzipSync level 9"
   }
 }

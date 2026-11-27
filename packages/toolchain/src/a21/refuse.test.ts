@@ -52,15 +52,17 @@ async function compile(worker: string, flags: string[] = [], extra: Record<strin
   const log = new TextDecoder().decode(run.stderr) + new TextDecoder().decode(run.stdout);
   let reached = false;
   let preludeC = false;
+  let ffiLinked = false;
   if (run.exitCode === 0) {
     for (const f of await readdir(out)) {
+      if (f.includes("node_ffi")) ffiLinked = true;
       if (!f.endsWith(".c") && !f.endsWith(".h")) continue;
       const text = await readFile(join(out, f), "utf8");
       if (new RegExp(`^${HOSTILE}`, "m").test(text)) reached = true;
       if (text.includes("sb_prelude_probe")) preludeC = true;
     }
   }
-  return { ok: run.exitCode === 0, log, reached, preludeC };
+  return { ok: run.exitCode === 0, log, reached, preludeC, ffiLinked };
 }
 
 const refused = {
@@ -137,6 +139,15 @@ test("refused: node:ffi from another module the app imports, through a bundler's
   });
   expect(viaHelper.ok, viaHelper.log).toBe(false);
   expect(viaHelper.log).toContain("SB_INPUT_REFUSED");
+  // loading it for its export names (cjs-module-lexer follows `module.exports = require(...)`) would link it as well
+  const reexport = await compile('import "./extra.cjs";', [], {
+    "extra.cjs": "module.exports = require('node:ffi');\n",
+  });
+  expect(reexport.ok, reexport.log).toBe(false);
+  expect(reexport.log).toContain("SB_INPUT_REFUSED");
+  const star = await compile('import "./extra.mjs";', [], { "extra.mjs": "export * from 'node:ffi';\n" });
+  expect(star.ok, star.log).toBe(false);
+  expect(star.log).toContain("SB_INPUT_REFUSED");
 });
 
 test("node:ffi stays available where intrinsics are: --sb-allow-intrinsics and a standalone build's entry; bare 'ffi' is no builtin", async () => {
@@ -156,6 +167,18 @@ test("node:ffi stays available where intrinsics are: --sb-allow-intrinsics and a
   const bare = await compile("import 'ffi';");
   expect(bare.log).not.toContain("raw native access");
 });
+
+test("a specifier built at run time cannot link node:ffi: it compiles, and no ffi unit is in the output", async () => {
+  for (const worker of [
+    "const m = 'ffi'; globalThis.sbA = () => process.getBuiltinModule('node:' + m);",
+    "const m = 'ffi'; globalThis.sbB = () => require('node:' + m);",
+    "const m = 'ffi'; globalThis.sbC = () => import('node:' + m);",
+    "import { createRequire } from 'node:module'; const r = createRequire('/x.js'); globalThis.sbD = () => r('node:ffi');",
+  ]) {
+    const r = await compile(worker);
+    expect(r.ffiLinked, worker + "\n" + r.log).toBe(false);
+  }
+}, 120_000);
 
 test("not refused, and harmless: names built at run time never reach the C", async () => {
   const names = [
