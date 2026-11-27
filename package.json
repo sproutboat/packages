@@ -68,6 +68,7 @@
     "test:native-do-proxy-rpc": "bun packages/runtime/test/native-do-proxy-rpc.ts",
     "test:native-d1": "bun packages/runtime/test/native-d1.ts",
     "test:native-sqlite-lock": "bun packages/runtime/test/native-sqlite-lock.ts",
+    "test:native-sqlite-landlock": "bun packages/runtime/test/native-sqlite-landlock.ts",
     "test:native-byte-text": "bun packages/runtime/test/native-byte-text.ts",
     "test:native-request-streaming": "bun packages/runtime/test/native-request-streaming.ts",
     "test:native-http": "bun packages/runtime/test/native-http.ts",

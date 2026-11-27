@@ -6,16 +6,16 @@
     "preludeSha256": "164b49acbeaee26b3fc176f8583eba23d406b36eca2c2b556b6f71e6cc2b91a5"
   },
   "standalone": {
-    "sha256": "81ac88afe37cb42effc58efff864e73c2d2a032d348cb70a20741bf705f71bbe",
-    "canonicalSha256": "81ac88afe37cb42effc58efff864e73c2d2a032d348cb70a20741bf705f71bbe",
-    "bytes": 862538,
-    "preludeSha256": "e1884d00afc9b93a765e93cd67ae18a4ccb8c2d63e16f203ceeab14f24b666f8"
+    "sha256": "2d12a1eda55abbc953910d929fe42ffd069ddaa65ca5c406eea05c9139487b01",
+    "canonicalSha256": "2d12a1eda55abbc953910d929fe42ffd069ddaa65ca5c406eea05c9139487b01",
+    "bytes": 874355,
+    "preludeSha256": "e4ef3a2ea1ed9b8ea9e43962cbc185cea1343d418deb9418a9d51c53f71a8f37"
   },
   "cloud": {
-    "sha256": "81ac88afe37cb42effc58efff864e73c2d2a032d348cb70a20741bf705f71bbe",
-    "canonicalSha256": "81ac88afe37cb42effc58efff864e73c2d2a032d348cb70a20741bf705f71bbe",
-    "bytes": 862538,
-    "preludeSha256": "e1884d00afc9b93a765e93cd67ae18a4ccb8c2d63e16f203ceeab14f24b666f8",
+    "sha256": "2d12a1eda55abbc953910d929fe42ffd069ddaa65ca5c406eea05c9139487b01",
+    "canonicalSha256": "2d12a1eda55abbc953910d929fe42ffd069ddaa65ca5c406eea05c9139487b01",
+    "bytes": 874355,
+    "preludeSha256": "e4ef3a2ea1ed9b8ea9e43962cbc185cea1343d418deb9418a9d51c53f71a8f37",
     "assetBake": false
   }
 }

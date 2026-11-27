@@ -6,10 +6,10 @@
     "preludeSha256": "164b49acbeaee26b3fc176f8583eba23d406b36eca2c2b556b6f71e6cc2b91a5"
   },
   "cloud": {
-    "sha256": "42a3278b67b3fb75572ab2e6eed36c4b6ffacbb32954b320fa4b2e2b426c8ecb",
-    "canonicalSha256": "3fade3cd684577a6586b5987e0f0bbbce601b311f583a347e2f281f51a2df36d",
-    "bytes": 1188261,
-    "preludeSha256": "e1884d00afc9b93a765e93cd67ae18a4ccb8c2d63e16f203ceeab14f24b666f8",
+    "sha256": "48ef173cf84ed52f14faafb685dbda949e720cc92f98c3cb685a3bf08f6838ac",
+    "canonicalSha256": "f5242a46972f962e25aa96f0e7e4442e0d9cbd463aa91bdf85eec5fddd8d138c",
+    "bytes": 1200078,
+    "preludeSha256": "e4ef3a2ea1ed9b8ea9e43962cbc185cea1343d418deb9418a9d51c53f71a8f37",
     "assetBake": true
   }
 }
