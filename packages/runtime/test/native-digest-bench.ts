@@ -13,6 +13,8 @@ const [basePath, requestsArg, optArg] = process.argv.slice(2);
 if (!basePath) throw new Error("usage: bun native-digest-bench.ts BASE_PRELUDE.js [requests] [optimize]");
 const requests = Number(requestsArg ?? 300);
 const optimize = Number(optArg ?? 2);
+// The date the h2h app deploys with: from 2026-11-06 crypto.subtle is the dated one (`__sbSubtleNext`), not the legacy one.
+const COMPAT_DATE = process.env.COMPAT_DATE ?? "2026-11-23";
 
 const handler = `
 const BUF = (() => { const b = new Uint8Array(65536); let x = 0x9e3779b9 | 0; for (let i = 0; i < b.length; i++) { x ^= x << 13; x ^= x >>> 17; x ^= x << 5; b[i] = x & 255; } return b; })();
@@ -67,7 +69,7 @@ async function measure(label: string, prelude: string, workdir: string) {
   await Bun.$`mkdir -p ${dir}`.quiet();
   const generated = join(dir, "digest.generated.js");
   const binary = join(dir, "digest-native");
-  await writeFile(generated, wrapNativeFetchHandler(handler, prelude));
+  await writeFile(generated, wrapNativeFetchHandler(handler, prelude, {}, undefined, undefined, COMPAT_DATE));
   await rm(binary, { force: true });
   await compileNative({ generated, binary, dir, cacheRoot: workdir, bearssl: true, optimize });
   const port = freePort();
