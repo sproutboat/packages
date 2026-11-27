@@ -72,8 +72,15 @@ export const EMPTY_BINDINGS: Bindings = {
   assets: "",
 };
 
+/** A Worker entry: a method, a function-valued property (`fetch: async (req, env, ctx) => …`, minified too), `{ fetch }`, `{ fetch: handle }`, or a WorkerEntrypoint class.
+ *  Cloudflare accepts all of them; the runtime calls `handlers.fetch(...)` whatever form defined it. */
 export function hasEntryHandler(source: string): boolean {
-  return /\b(fetch|scheduled|queue)\s*\(/.test(source) || /\bextends\s+WorkerEntrypoint\b/.test(source);
+  return (
+    /\b(fetch|scheduled|queue)\s*\(/.test(source) ||
+    /\b(fetch|scheduled|queue)\s*:\s*(?:async\b\s*)?(?:\(|function\b|[A-Za-z_$][\w$]*\s*=>)/.test(source) ||
+    /[{,]\s*(fetch|scheduled|queue)\s*(?:[,}]|:\s*[A-Za-z_$][\w$.]*\s*[,}])/.test(source) ||
+    /\bextends\s+WorkerEntrypoint\b/.test(source)
+  );
 }
 
 function hasBindings(b: Bindings): boolean {
