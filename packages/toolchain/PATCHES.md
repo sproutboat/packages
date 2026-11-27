@@ -127,6 +127,10 @@ Repros on the **unpatched** alpha 26 tree (macOS arm64, `bun runtime/index.js na
 
 All ten issues are still open (#464 now has a fix upstream; it is still open and has one comment). We do not post on upstream; whether to close or comment is the user's call.
 
+## Alpha 26 qualification (2026-11-27)
+
+`build/requalify.sh --tier porffor --repro` in sproutd (sproutboat/sproutd #162, this series at `898c2dc`, romeo smokes): every count equals the alpha 25 baseline (probes 7/2/0, globals-probes 10/0/1, b10 64/0/0, b10-real 25/0/0, corpus 1,024/0/0, A5 49/3, parity 830 of 831 equal), 29 smoke suites pass, the generation (abi `8e3e8fd8`) is reproduced by a clean second build, and the split link needs no change. Density on romeo, A B A B against alpha 25: all eight trials pass at 950 apps per 1,536M and 1,000 per 2,048M, idle PSS 8 to 10 MiB lower at 950. `bun run test:native lto cc` on macOS arm64 with the alpha 26 channel: 2 of 2 pass. The Linux `native` job runs in CI when the PR is marked ready. The `test` suite: 784 pass, 0 fail.
+
 ## Alpha 25 check (2026-11-17)
 
 Alpha 25 is twenty-five commits on alpha 24 (npm `0.0.0-alpha.25`, gitHead `c9af40c`, upstream `main`, published 2026-11-17 08:05 UTC): +387/-129
