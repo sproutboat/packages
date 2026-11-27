@@ -1,6 +1,6 @@
 {
   "name": "@sproutboat/emit",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "Turn a plain Cloudflare Workers bundle (modules plus script-upload metadata) into the module Sproutboat compiles.",
   "license": "MIT",
   "repository": {
@@ -23,7 +23,7 @@
   "dependencies": {
     "@sproutboat/assets": "^0.4.0",
     "@sproutboat/config": "^0.7.0",
-    "@sproutboat/runtime": "^0.51.0",
+    "@sproutboat/runtime": "^0.51.1",
     "meriyah": "7.4.3"
   }
 }
