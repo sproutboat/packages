@@ -19,18 +19,23 @@ Function and vm source (their strings are parsed and compiled in). The error car
 The entry is trusted, so a standalone build (the author's own bundle is the entry) is unchanged. A compile that builds
 the platform's own template (a worker.js holding the prelude) or develops the runtime passes --sb-allow-intrinsics.
 
+It also refuses `node:ffi` (isNativeBuiltin in refuse.js, checked in `dep` in modules.js, so import, import(), require and
+process.getBuiltinModule all fail): the module is raw native access, dlopen of any library and calls through function pointers, and its
+runtime injects Porffor.c into the AST after the check above has run, so importing it bypassed the refusal of Porffor.dlopen. The same
+trusted code and --sb-allow-intrinsics keep it. REFUSAL_LEVEL is 2. Other native-reaching builtins are not refused here.
+
 Class: ours
 Pass: refuseIntrinsics (refuse.js; modules.js, codegen.js, semantic.js)
 ---
- compiler/codegen.js  |  3 ++-
- compiler/modules.js  | 15 ++++++++++++
- compiler/refuse.js   | 55 ++++++++++++++++++++++++++++++++++++++++++++
- compiler/semantic.js |  3 ++-
- 4 files changed, 74 insertions(+), 2 deletions(-)
+ compiler/codegen.js  |  3 +-
+ compiler/modules.js  | 33 ++++++++++++++++++++-
+ compiler/refuse.js   | 69 ++++++++++++++++++++++++++++++++++++++++++++
+ compiler/semantic.js |  3 +-
+ 4 files changed, 105 insertions(+), 3 deletions(-)
  create mode 100644 compiler/refuse.js
 
 diff --git a/compiler/codegen.js b/compiler/codegen.js
-index ced70517a07814fb29334e4e5250a5c3a7725d51..b331d8e061a184cfaf1752ee034266c37cabe6ff 100644
+index 0787f7e12caaebbbb0b8c83254b987635134d5ee..a849c5fae6f945ace2d09ef719c677bdadabfced 100644
 --- a/compiler/codegen.js
 +++ b/compiler/codegen.js
 @@ -12,6 +12,7 @@ import { BuiltinFuncs, BuiltinVars, fullPrototypes } from './builtins.js';
@@ -41,7 +46,7 @@ index ced70517a07814fb29334e4e5250a5c3a7725d51..b331d8e061a184cfaf1752ee034266c3
  import { patternNames, appModuleIds } from './modules.js';
  import temporalPolyfillSource from './intl/temporal.js';
  import intlPolyfillSource from './intl/intl.js';
-@@ -2242,7 +2243,7 @@ const generateCall = (scope, decl) => {
+@@ -2272,7 +2273,7 @@ const generateCall = (scope, decl) => {
        const fnArgs = knowns.slice(0, -1).map(x => String(x));
        let parsed;
        try {
@@ -51,14 +56,14 @@ index ced70517a07814fb29334e4e5250a5c3a7725d51..b331d8e061a184cfaf1752ee034266c3
          if (e.name === 'SyntaxError') return internalThrow(scope, 'SyntaxError', e.message);
          throw e;
 diff --git a/compiler/modules.js b/compiler/modules.js
-index 7ec2fb8d50d34d33f3607a1f78915531863073c0..b8c323e08e0c9f985f8fda11b562f61c2dbf3d7f 100644
+index b689e2e4d817f8e957b87abe851c5a2f62161abc..07fa07b917a2861b729132b6ca48d0b7f417613e 100644
 --- a/compiler/modules.js
 +++ b/compiler/modules.js
 @@ -1,6 +1,7 @@
  import './prefs.js';
  import parse from './parser/index.js';
  import lowerTs from './typescript.js';
-+import { refuseIntrinsics } from './refuse.js';
++import { refuseIntrinsics, isNativeBuiltin, refuseNativeBuiltin } from './refuse.js';
  
  const fs = (typeof process?.version !== 'undefined' ? (await import('node:fs')) : undefined);
  
@@ -80,7 +85,7 @@ index 7ec2fb8d50d34d33f3607a1f78915531863073c0..b8c323e08e0c9f985f8fda11b562f61c
  export const isEsmSource = (file, src) => {
    if (/\.m[jt]s$/.test(file) || file.startsWith('data:')) return true;
    if (/\.c[jt]s$/.test(file)) return false;
-@@ -754,6 +766,7 @@ const vmWrapper = (code, params, id) => {
+@@ -755,6 +767,7 @@ const vmWrapper = (code, params, id) => {
    let body;
    try {
      body = params ? [ { type: 'ReturnStatement', argument: parse(`(function (${params.join(',')}) {\n${code}\n})`, { module: false }).body[0].expression } ] : parse(code, { module: false }).body;
@@ -96,7 +101,7 @@ index 7ec2fb8d50d34d33f3607a1f78915531863073c0..b8c323e08e0c9f985f8fda11b562f61c
    } catch (e) {
      if (e.name !== 'SyntaxError') throw e;
      return { type: 'NewExpression', callee: ident('SyntaxError'), arguments: [ literal(e.message) ] };
-@@ -947,6 +961,7 @@ export default (entrySource, entryFile, opts = {}) => {
+@@ -949,6 +963,7 @@ export default (entrySource, entryFile, opts = {}) => {
      mod.esm = entry ? !opts.script && !opts.cjs && !/\.c[jt]s$/.test(file) : isEsmSource(file, source);
      // cjs code is a function body to node
      const ast = parse(source, { module: mod.esm, ts, topReturn: !mod.esm && !(entry && opts.script) });
@@ -104,12 +109,52 @@ index 7ec2fb8d50d34d33f3607a1f78915531863073c0..b8c323e08e0c9f985f8fda11b562f61c
      if (ts) lowerTs(ast);
      mod.body = ast.body;
      literalImports(mod.body);
+@@ -974,6 +989,12 @@ export default (entrySource, entryFile, opts = {}) => {
+     return mod;
+   };
+ 
++  // sproutboat: node:ffi is raw native access, refused for the same code that may not name Porffor.dlopen (refuse.js)
++  const refuseNative = (mod, file) => {
++    const name = file.startsWith(RUNTIME_ROOT + '/node/') ? file.slice(RUNTIME_ROOT.length + 6, -3) : null;
++    if (name !== null && isNativeBuiltin(name) && isUntrusted(mod.file, entryDir, mod.entry)) refuseNativeBuiltin(name, mod.file.startsWith('data:') ? 'a data: module' : `the module ${mod.rel}`);
++  };
++
+   // 'dynamic'/'deferred' targets are evaluated when first needed unless something imports them normally
+   const dep = (mod, node, lazy = false, as = null) => {
+     const attrs = node.attributes ?? [];
+@@ -986,6 +1007,8 @@ export default (entrySource, entryFile, opts = {}) => {
+       if (!lazy) throw Object.assign(e, { unresolved: true });
+       return { error: e.message, notFound: e.notFound };
+     }
++    // outside the try: it fails the compile, also for import() and require()
++    refuseNative(mod, file);
+     // data: urls are javascript or json, esm imports check their type attribute against the module's format
+     const mime = file.startsWith('data:') ? file.slice(5, file.search(/[,;]/)) : null;
+     const json = file.endsWith('.json') || mime === 'application/json';
+@@ -1021,8 +1044,16 @@ export default (entrySource, entryFile, opts = {}) => {
+   };
+   // names node's cjs-module-lexer finds, through reexported modules too
+   const cjsReexported = mod => mod.cjsExports.reexports.flatMap(spec => {
++    let file;
++    try {
++      file = resolve(spec, mod.file, true, runtime);
++    } catch {
++      return [];
++    }
++    // loading it would link it into the program, so this refuses outside the try below
++    refuseNative(mod, file);
+     try {
+-      const d = load(resolve(spec, mod.file, true, runtime));
++      const d = load(file);
+       return d.esm || d.cjsExports ? [ d ] : [];
+     } catch {
+       return [];
 diff --git a/compiler/refuse.js b/compiler/refuse.js
 new file mode 100644
-index 0000000000000000000000000000000000000000..cd844924d6a4d4f7527dd169fb3cbb4d07508814
+index 0000000000000000000000000000000000000000..569025be3215dd2489fe164c88484b91c62b928f
 --- /dev/null
 +++ b/compiler/refuse.js
-@@ -0,0 +1,55 @@
+@@ -0,0 +1,69 @@
 +import './prefs.js';
 +
 +// sproutboat: code compiled on someone else's behalf never names the compiler's own intrinsics.
@@ -123,7 +168,21 @@ index 0000000000000000000000000000000000000000..cd844924d6a4d4f7527dd169fb3cbb4d
 +// `--sb-allow-intrinsics` (exactly that flag) switches it off: the platform's own template compile, runtime development.
 +export const REFUSED_MARK = 'SB_INPUT_REFUSED';
 +// What a builder reports (TOOLCHAIN.json `intrinsic_refusal`): the feature level of this tree. @sproutboat/toolchain's INTRINSIC_REFUSAL says what is expected.
-+export const REFUSAL_LEVEL = 1;
++// 2: `node:ffi` is refused too (isNativeBuiltin below).
++export const REFUSAL_LEVEL = 2;
++
++// Builtin modules that are raw native calls: `node:ffi` dlopens any library, calls through function pointers and reads and writes raw
++// memory, and its runtime injects `Porffor.c` into the AST after the check above has run. Naming `Porffor.dlopen` is refused, so importing
++// the module that wraps it is as well (`specializeFfi` is a bypass otherwise). Compiled code that is not the platform's cannot link them:
++// `dep` in modules.js asks `isNativeBuiltin` for every resolved import, `import()` and `require()`, and `process.getBuiltinModule`.
++// Other native-reaching builtins (child_process, worker_threads, net ...) are NOT listed: they stop at the host sandbox and are a product decision.
++const NATIVE_BUILTINS = new Set([ 'ffi' ]);
++export const isNativeBuiltin = name => NATIVE_BUILTINS.has(name);
++/** Throws for an import of a native builtin from `what`'s code (a module path); `--sb-allow-intrinsics` allows it like the intrinsics. */
++export const refuseNativeBuiltin = (name, what) => {
++  if (Prefs.sbAllowIntrinsics === true) return;
++  throw new Error(`${REFUSED_MARK}: ${what} imports \`node:${name}\`, which is raw native access (like Porffor.dlopen) and is not available here`);
++};
 +
 +// `Porffor` itself, and the builtin namespaces' dunder names: __Porffor_malloc, __Array_prototype_join,
 +// __ecma262_ToString, __Uint8Array___proto__, __RegExp_$1$get ... A name that is only a flag, `__DEV__`, `__proto__`,

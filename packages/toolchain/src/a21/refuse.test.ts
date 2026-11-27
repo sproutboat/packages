@@ -52,15 +52,17 @@ async function compile(worker: string, flags: string[] = [], extra: Record<strin
   const log = new TextDecoder().decode(run.stderr) + new TextDecoder().decode(run.stdout);
   let reached = false;
   let preludeC = false;
+  let ffiLinked = false;
   if (run.exitCode === 0) {
     for (const f of await readdir(out)) {
+      if (f.includes("node_ffi")) ffiLinked = true;
       if (!f.endsWith(".c") && !f.endsWith(".h")) continue;
       const text = await readFile(join(out, f), "utf8");
       if (new RegExp(`^${HOSTILE}`, "m").test(text)) reached = true;
       if (text.includes("sb_prelude_probe")) preludeC = true;
     }
   }
-  return { ok: run.exitCode === 0, log, reached, preludeC };
+  return { ok: run.exitCode === 0, log, reached, preludeC, ffiLinked };
 }
 
 const refused = {
@@ -96,6 +98,17 @@ const refused = {
   "vm.Script": `import vm from 'node:vm'; new vm.Script('Porffor.c${"`"}${"\\n"}${HOSTILE}${"\\n"}${"`"}').runInThisContext();`,
   "a data: module": `import 'data:text/javascript,Porffor.c${"`"}%0A%23error HOSTILE_C_REACHED%0A${"`"}';`,
   "a dynamic data: import": `import('data:text/javascript,Porffor.c${"`"}%0A%23error HOSTILE_C_REACHED%0A${"`"}');`,
+  // node:ffi is raw native access (dlopen of any library, calls through function pointers) and its runtime injects Porffor.c after the check
+  // above has run, so one import used to reach libc from compiled app code.
+  "an import of node:ffi": `import { dlopen } from 'node:ffi'; dlopen(null, { getuid: { arguments: [], return: 'i32' } });`,
+  "a namespace import of node:ffi": `import * as ffi from 'node:ffi'; ffi.dlopen(null, {});`,
+  "a side-effect import of node:ffi": `import 'node:ffi';`,
+  "a re-export from node:ffi": `export { dlopen } from 'node:ffi';`,
+  "a dynamic import of node:ffi": `import('node:ffi');`,
+  "require of node:ffi": `const { dlopen } = require('node:ffi'); dlopen(null, {});`,
+  "process.getBuiltinModule of node:ffi": `process.getBuiltinModule('node:ffi').dlopen(null, {});`,
+  "node:ffi from a data: module": `import 'data:text/javascript,import "node:ffi"';`,
+  "node:ffi from a data: module named like the prelude": `import 'data:text/javascript,import "node:ffi";//shared-prelude.js';`,
   "a data: module named like the prelude": `import 'data:text/javascript,Porffor.c${"`"}%0A%23error HOSTILE_C_REACHED%0A${"`"};//shared-prelude.js';`,
 } satisfies Record<string, string>;
 
@@ -114,6 +127,60 @@ test("refused: another module the app imports (not only worker.js)", async () =>
   expect(r.log).toContain("SB_INPUT_REFUSED");
 });
 
+test("refused: node:ffi from another module the app imports, through a bundler's createRequire-style helper too", async () => {
+  const FFI =
+    "import { dlopen } from 'node:ffi'; export const uid = dlopen(null, { getuid: { arguments: [], return: 'i32' } });\n";
+  const viaImport = await compile('import "./extra.js";', [], { "extra.js": FFI });
+  expect(viaImport.ok, viaImport.log).toBe(false);
+  expect(viaImport.log).toContain("SB_INPUT_REFUSED");
+  expect(viaImport.log).toContain("node:ffi");
+  const viaHelper = await compile('import "./extra.js";', [], {
+    "extra.js": "const __require = require; __require('node:ffi');\n",
+  });
+  expect(viaHelper.ok, viaHelper.log).toBe(false);
+  expect(viaHelper.log).toContain("SB_INPUT_REFUSED");
+  // loading it for its export names (cjs-module-lexer follows `module.exports = require(...)`) would link it as well
+  const reexport = await compile('import "./extra.cjs";', [], {
+    "extra.cjs": "module.exports = require('node:ffi');\n",
+  });
+  expect(reexport.ok, reexport.log).toBe(false);
+  expect(reexport.log).toContain("SB_INPUT_REFUSED");
+  const star = await compile('import "./extra.mjs";', [], { "extra.mjs": "export * from 'node:ffi';\n" });
+  expect(star.ok, star.log).toBe(false);
+  expect(star.log).toContain("SB_INPUT_REFUSED");
+});
+
+test("node:ffi stays available where intrinsics are: --sb-allow-intrinsics and a standalone build's entry; bare 'ffi' is no builtin", async () => {
+  const FFI = "import { dlopen } from 'node:ffi'; globalThis.sbFfi = typeof dlopen;\n";
+  const allowed = await compile(FFI, ["--sb-allow-intrinsics"]);
+  expect(allowed.ok, allowed.log).toBe(true);
+  const root = await tree();
+  const work = join(root, `w${n++}`);
+  await mkdir(work);
+  await writeFile(join(work, "app.js"), `${FFI}export default { fetch() { return new Response("x"); } };\n`);
+  const run = Bun.spawnSync(
+    ["bun", join(root, "runtime/index.js"), "c", join(work, "app.js"), "-o", join(work, "out")],
+    { cwd: work, stdout: "pipe", stderr: "pipe" },
+  );
+  expect(run.exitCode, new TextDecoder().decode(run.stderr)).toBe(0);
+  // a plain `import 'ffi'` is not the builtin (it needs the node: prefix), so it is not refused as one: it is an unresolved package
+  const bare = await compile("import 'ffi';");
+  expect(bare.log).not.toContain("raw native access");
+});
+
+test("a specifier built at run time cannot link node:ffi: it compiles, and no ffi unit is in the output", async () => {
+  for (const worker of [
+    "const m = 'ffi'; globalThis.sbA = () => process.getBuiltinModule('node:' + m);",
+    "const m = 'ffi'; globalThis.sbB = () => require('node:' + m);",
+    "const m = 'ffi'; globalThis.sbC = () => import('node:' + m);",
+    "import { createRequire } from 'node:module'; const r = createRequire('/x.js'); globalThis.sbD = () => r('node:ffi');",
+  ]) {
+    const r = await compile(worker);
+    expect(r.ok, worker + "\n" + r.log).toBe(true);
+    expect(r.ffiLinked, worker + "\n" + r.log).toBe(false);
+  }
+}, 120_000);
+
 test("not refused, and harmless: names built at run time never reach the C", async () => {
   const names = [
     `globalThis["Porffor"].c${C};`,
@@ -125,7 +192,7 @@ test("not refused, and harmless: names built at run time never reach the C", asy
     const r = await compile(worker);
     expect(r.reached, worker).toBe(false);
   }
-});
+}, 60_000);
 
 test("an ordinary app compiles: strings, comments, flags named like dunders and every plain builtin pass", async () => {
   const r = await compile(

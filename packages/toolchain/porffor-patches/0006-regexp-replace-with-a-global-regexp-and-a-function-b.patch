@@ -15,10 +15,10 @@ Upstream: https://github.com/CanadaHonk/porffor/issues/460
  1 file changed, 65 insertions(+), 4 deletions(-)
 
 diff --git a/compiler/builtins/regexp.ts b/compiler/builtins/regexp.ts
-index 582e448ed8391e2908a3cec49f9e7ef6716b11d4..8eac8b2976241e6ebcd777edc429361e01394a99 100644
+index 4538d73354ea97c44d6cac588a09f3edee820161..209e4231691481daea6a751f84b1c07dff8deb62 100644
 --- a/compiler/builtins/regexp.ts
 +++ b/compiler/builtins/regexp.ts
-@@ -4571,6 +4571,62 @@ export const __Porffor_regex_replacePlain = (searchValue: any, str: any, repl: a
+@@ -4570,6 +4570,62 @@ export const __Porffor_regex_replacePlain = (searchValue: any, str: any, repl: a
    return buf as bytestring;
  };
  
@@ -81,7 +81,7 @@ index 582e448ed8391e2908a3cec49f9e7ef6716b11d4..8eac8b2976241e6ebcd777edc429361e
  export const __RegExp_prototype_Symbol_replace = function (this: any, string: any, replaceValue: any) {
    const rx: any = this;
    __Porffor_regex_requireObject(rx);
-@@ -4582,6 +4638,9 @@ export const __RegExp_prototype_Symbol_replace = function (this: any, string: an
+@@ -4581,6 +4637,9 @@ export const __RegExp_prototype_Symbol_replace = function (this: any, string: an
  
    const pristine: boolean = __Porffor_regex_pristine(rx);
    if (pristine && !functional && __Porffor_regex_flagIn(replaceValue, 36) == false) return __Porffor_regex_replacePlain(rx, s, replaceValue);
@@ -91,7 +91,7 @@ index 582e448ed8391e2908a3cec49f9e7ef6716b11d4..8eac8b2976241e6ebcd777edc429361e
  
    let global: boolean = false;
    let fullUnicode: boolean = false;
-@@ -4606,7 +4665,8 @@ export const __RegExp_prototype_Symbol_replace = function (this: any, string: an
+@@ -4605,7 +4664,8 @@ export const __RegExp_prototype_Symbol_replace = function (this: any, string: an
      if (matchStr.length == 0) __Porffor_regex_liSet(rx, __Porffor_regex_advance(s, ecma262.ToLength(__Porffor_regex_liGet(rx)), fullUnicode));
    }
  
@@ -101,7 +101,7 @@ index 582e448ed8391e2908a3cec49f9e7ef6716b11d4..8eac8b2976241e6ebcd777edc429361e
    let nextPos: i32 = 0;
    const nResults: i32 = results.length;
    for (let r: i32 = 0; r < nResults; r++) {
-@@ -4642,14 +4702,15 @@ export const __RegExp_prototype_Symbol_replace = function (this: any, string: an
+@@ -4641,14 +4701,15 @@ export const __RegExp_prototype_Symbol_replace = function (this: any, string: an
      }
  
      if (position >= nextPos) {

@@ -19,7 +19,7 @@ Pass: patchUnitLayout (P2, P3, P3b, P6 render.js part)
  1 file changed, 22 insertions(+), 4 deletions(-)
 
 diff --git a/compiler/render.js b/compiler/render.js
-index e32bbf17f56b54596eee61e546e821945a6ac9c7..cb4bda5240246555dab88479353ec724037f9f37 100644
+index 72c66885e215f566e2aa9496f33caffb1c7f976d..6e4a199d1b4204548a1fed5054ac2c2683727273 100644
 --- a/compiler/render.js
 +++ b/compiler/render.js
 @@ -5,6 +5,7 @@ import {

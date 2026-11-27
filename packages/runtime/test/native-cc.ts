@@ -110,7 +110,7 @@ try {
 
   assert(
     swift.has("p__main__23main"),
-    "porf.h no longer declares p__main__23main with PORF_CC: has the compiler dropped swiftcall (alpha 25)?",
+    "porf.h no longer declares p__main__23main with PORF_CC: has the compiler dropped swiftcall (alpha 26)?",
   );
   const hasMacro = texts[texts.length - 1].includes("#define PORF_CC __attribute__((swiftcall))");
   assert(hasMacro, "porf.h has no PORF_CC swiftcall definition: this test is written for Porffor alpha 23 or later");

@@ -17,7 +17,7 @@ Pass: patchStableNames (P5, P6 codegen.js part)
  1 file changed, 5 insertions(+), 3 deletions(-)
 
 diff --git a/compiler/codegen.js b/compiler/codegen.js
-index bf6f45206a1216826d153922d1fc47ed4dc3db5b..96582f4c5c3bfba75a6f9cf61db78e0b199d796e 100644
+index 5cdd4166e096065aa4ce0c630c8e0e29f5db2c9a..093d818682e9e676a3ad83439f6aeae9526a96c2 100644
 --- a/compiler/codegen.js
 +++ b/compiler/codegen.js
 @@ -12,7 +12,7 @@ import { BuiltinFuncs, BuiltinVars, fullPrototypes } from './builtins.js';
@@ -29,7 +29,7 @@ index bf6f45206a1216826d153922d1fc47ed4dc3db5b..96582f4c5c3bfba75a6f9cf61db78e0b
  import temporalPolyfillSource from './intl/temporal.js';
  import intlPolyfillSource from './intl/intl.js';
  import tzSource from './intl/tz.js';
-@@ -518,7 +518,7 @@ const materializeFunctionValue = (scope, func, markReferenced = true) => {
+@@ -522,7 +522,7 @@ const materializeFunctionValue = (scope, func, markReferenced = true) => {
  
  // one record per activation: shared within it, fresh next call (cache resets to undefined)
  const cachedFunctionValue = (scope, func, markReferenced = true) => {
@@ -38,7 +38,7 @@ index bf6f45206a1216826d153922d1fc47ed4dc3db5b..96582f4c5c3bfba75a6f9cf61db78e0b
    emitIf(scope, Bin('!=', T.i32, JvType(cache), Const(T.i32, TYPES.function)),
      () => assign(scope, cache, makeFunctionValue(scope, func, markReferenced)));
    return cache;
-@@ -5684,7 +5684,7 @@ const generateClass0 = (scope, decl) => {
+@@ -5713,7 +5713,7 @@ const generateClass0 = (scope, decl) => {
      // computed keys are evaluated once
      let keyNode = () => !storage && generate(func, key);
      if (computed) {
@@ -47,7 +47,7 @@ index bf6f45206a1216826d153922d1fc47ed4dc3db5b..96582f4c5c3bfba75a6f9cf61db78e0b
        allocVar(scope, keyGlobal, true);
        assign(scope, Global(keyGlobal, T.jsval), k);
        keyNode = () => Global(keyGlobal, T.jsval);
-@@ -6799,6 +6799,8 @@ export default (program, opts = {}) => {
+@@ -6895,6 +6895,8 @@ export default (program, opts = {}) => {
    // a unit's last ic chunk only needs its sites
    for (const unit in icSites) data[icSites[unit].chunk].length = ((icSites[unit].site - 1) % 256 + 1) * 48;
  

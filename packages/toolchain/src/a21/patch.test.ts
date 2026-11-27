@@ -127,7 +127,6 @@ test("the shipped tree carries every patch's edit", async () => {
     "compiler/builtins/promise.ts",
     "compiler/builtins/string.ts",
     "compiler/builtins/regexp.ts",
-    "compiler/builtins/json.ts",
     "compiler/builtins/date.ts",
     "compiler/builtins/_internal_object.ts",
     "compiler/builtins_precompiled.js",
@@ -143,7 +142,7 @@ test("the shipped tree carries every patch's edit", async () => {
     ["compiler/codegen.js", "#class_computed_prop_${unitOf(scope)}_"],
     ["compiler/codegen.js", "sproutboat P10: shared dispatch arguments are evaluated in order"],
     ["compiler/codegen.js", "sproutboat P13: the right operand of a logical expression is a branch"],
-    // P11 on alpha 25 leaves a decorated or boxed class alone.
+    // P11 on alpha 26 leaves a decorated or boxed class alone.
     ["compiler/codegen.js", "if (!expr && decl._writes && !classDecorators && !decl._boxed) {"],
     ["compiler/modules.js", "sproutboat P6: app-owned modules"],
     ["compiler/modules.js", "sproutboat P4: prelude-declared names override runtime globals"],
@@ -157,11 +156,10 @@ test("the shipped tree carries every patch's edit", async () => {
     ["compiler/render.js", "sproutboat P3: a unit's segments by content"],
     ["compiler/render.js", "sproutboat P6: app-module globals last"],
     ["compiler/render.js", "sproutboat: glibc select"],
-    // alpha 25's own text, untouched by any patch: js functions carry PORF_CC (swiftcall on clang arm64).
+    // alpha 26's own text, untouched by any patch: js functions carry PORF_CC (swiftcall on clang arm64).
     ["compiler/render.js", "#define PORF_CC __attribute__((swiftcall))"],
     ["compiler/builtins/_internal_object.ts", "sproutboat: frozen megamorphic cache"],
     ["compiler/builtins/promise.ts", "sproutboat: per-request cpu"],
-    ["compiler/builtins/json.ts", "sproutboat P9: a wide JSON string is sized by its own length"],
     ["compiler/builtins/date.ts", "sproutboat P12: UTC offsets without a colon"],
     ["compiler/index.js", "SB_EXTRA_LINK"],
     ["compiler/index.js", "SB_EXTRA_CFLAGS"],
@@ -174,7 +172,7 @@ test("the shipped tree carries every patch's edit", async () => {
     ["compiler/builtins/regexp.ts", "export const __Porffor_regex_replaceCallback = "],
   ] as const)
     expect(text[f], `${marker} in ${f}`).toContain(marker);
-  // alpha 25's own file (the TypeScript lowering) is untouched by every patch.
+  // alpha 26's own file (the TypeScript lowering) is untouched by every patch.
   expect(await Bun.file(join(root, "compiler/typescript.js")).exists()).toBe(true);
   // The table was regenerated after the builtin edits: it carries the replaceAll rewrite and the mega freeze.
   expect(text["compiler/builtins_precompiled.js"]).toContain("replaceAll");
@@ -349,7 +347,7 @@ test("P8: the shared dispatch functions sit in the unit that asked, under stable
   expect(new TextDecoder().decode(run.stdout).trim()).toBe("ABab  abb c c  2,3");
 }, 180_000);
 
-test("P9: JSON.parse of a large document with wide strings runs on the shipped alpha 25 tree", async () => {
+test("JSON.parse of a large document with wide strings runs on the shipped alpha 26 tree (was P9, fixed upstream by d648a51e)", async () => {
   const root = await patched();
   const work = join(root, "work-p9");
   await mkdir(work);
@@ -378,14 +376,68 @@ test("P9: JSON.parse of a large document with wide strings runs on the shipped a
   expect(out.trim()).toBe("637781 12000 naïve 中文 x11999");
 }, 180_000);
 
+test("0017: freezing the megamorphic cache drops entries whose key is not static data, keeps the rest, and stores nothing after", async () => {
+  // Alpha 26 matches a cache entry by shape and key POINTER. A key on the heap could sit on a free run that a worker hands out again for another
+  // string, so the freeze keeps only entries whose key lies in static data (below porf_static_end) and a pointer always means the same bytes.
+  const root = await patched();
+  const work = join(root, "work-freeze");
+  await mkdir(work);
+  await writeFile(
+    join(work, "freeze.js"),
+    [
+      "function census() {",
+      "  let nHeap = 0, nStatic = 0;",
+      "  Porffor.c`for (u32 n = 0; n < 4096; n++) {",
+      "    if (icMega == 0) break;",
+      "    u8* e = MEM + icMega + n * 20;",
+      "    u32 shape; memcpy(&shape, e, 4);",
+      "    u32 key; memcpy(&key, e + 16, 4);",
+      "    if (shape == 0) continue;",
+      "    if (key < porf_static_end) nStatic++; else nHeap++;",
+      "  }`;",
+      "  return nHeap + ',' + nStatic;",
+      "}",
+      "const heapKey = ['k', 'x'].join('');",
+      "const staticKey = 'kx';",
+      "__Porffor_object_icStoreMega(7, 11, Porffor.IR.ptr(heapKey), 0, 0, 5);",
+      "__Porffor_object_icStoreMega(8, 12, Porffor.IR.ptr(staticKey), 0, 0, 5);",
+      "console.log('before', census());",
+      "__Porffor_object_icFreezeMega();",
+      "console.log('after', census());",
+      "__Porffor_object_icStoreMega(9, 13, Porffor.IR.ptr(heapKey), 0, 0, 5);",
+      "__Porffor_object_icStoreMega(10, 14, Porffor.IR.ptr(staticKey), 0, 0, 5);",
+      "console.log('frozen', census());",
+    ].join("\n"),
+  );
+  const compile = Bun.spawn(
+    [
+      "bun",
+      join(root, "runtime/index.js"),
+      "native",
+      join(work, "freeze.js"),
+      "-o",
+      join(work, "freeze"),
+      "-O0",
+      "--sb-allow-intrinsics",
+    ],
+    { cwd: work, stdout: "pipe", stderr: "pipe" },
+  );
+  expect(await compile.exited, await new Response(compile.stderr).text()).toBe(0);
+  const run = Bun.spawn([join(work, "freeze")], { stdout: "pipe", stderr: "pipe" });
+  const [code, out] = await Promise.all([run.exited, new Response(run.stdout).text()]);
+  expect(code).toBe(0);
+  // "heap entries,static entries"
+  expect(out.trim().split("\n")).toEqual(["before 1,1", "after 0,1", "frozen 0,1"]);
+}, 180_000);
+
 test("P14: runtime globals are pinned to the template's set, and a free reference outside it is a compile error", async () => {
   const root = await patched();
-  // The shared prelude owns performance (an assignment) and process (a lazy accessor, `Object.defineProperty(globalThis, 'process', ...)`),
-  // both P4, the way sproutd's does; the template names MessageEvent.
+  // The shared prelude owns performance and process (P4, as in sproutd) and names MessageEvent and every builtin the apps use:
+  // alpha 26 keeps key strings in the builtins unit, laid out by content, so a builtin only one app links would move the globals unit.
   const prelude =
     "globalThis.performance = { now() { return 1; }, timeOrigin: 0 };\n" +
     "Object.defineProperty(globalThis, 'process', { get() { return { env: {}, platform: 'linux' }; }, set(v) {}, configurable: true });\n" +
-    "globalThis.__sbAnchor = () => [ MessageEvent, global ];\nexport {};\n";
+    'globalThis.__sbAnchor = () => [ MessageEvent, global, parseInt, parseFloat, JSON.stringify, " x".trimStart(), [] instanceof Array, console.log(1, 2) ];\nexport {};\n';
   const compile = async (name: string, body: string, pin?: string[]) => {
     const work = join(root, name);
     await mkdir(work);

@@ -14,10 +14,10 @@ Pass: patchRepeatDoubling
  1 file changed, 20 insertions(+), 4 deletions(-)
 
 diff --git a/compiler/builtins/string.ts b/compiler/builtins/string.ts
-index 59a0728b3f123bc8228bb04c1639a9648907a0fd..42cd32bf7a228545165edaf0cc6764afaafde0ee 100644
+index f059b39f336d4bc3397ae437f4aafaab7acd2b57..0712babdc2bb80303653b9a496dab2f7514c7586 100644
 --- a/compiler/builtins/string.ts
 +++ b/compiler/builtins/string.ts
-@@ -1046,8 +1046,16 @@ export const __String_prototype_repeat = function (this: string, cnt: any) {
+@@ -966,8 +966,16 @@ export const __String_prototype_repeat = function (this: string, cnt: any) {
    if (thisLen == 0) return '';
  
    const out: string = Porffor.malloc(6 + thisLen * count);
@@ -36,7 +36,7 @@ index 59a0728b3f123bc8228bb04c1639a9648907a0fd..42cd32bf7a228545165edaf0cc6764af
    }
  
    Porffor.IR.storeI32(out, 0, this.length * count);
-@@ -1062,8 +1070,16 @@ export const __ByteString_prototype_repeat = function (this: bytestring, cnt: an
+@@ -982,8 +990,16 @@ export const __ByteString_prototype_repeat = function (this: bytestring, cnt: an
    if (thisLen == 0) return '';
  
    const out: bytestring = Porffor.malloc(6 + thisLen * count);

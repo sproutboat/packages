@@ -6,7 +6,7 @@
 import manifest from "../../vendor/porffor-patched.json" with { type: "json" };
 
 /** The one supported alpha. A test checks it against the manifest. */
-export const CURRENT_ALPHA = "alpha-25";
+export const CURRENT_ALPHA = "alpha-26";
 
 export type PorfforA21Channel = typeof CURRENT_ALPHA;
 
@@ -39,19 +39,19 @@ export const PORFFOR_A21_PINS = {
   },
 } as const satisfies Readonly<Record<PorfforA21Channel, PorfforA21Pin>>;
 
-export const PORFFOR_A25_CHANNEL = PORFFOR_A21_PINS["alpha-25"].channel;
-export const PORFFOR_A25_COMMIT_FULL = PORFFOR_A21_PINS["alpha-25"].commitFull;
-export const PORFFOR_A25_COMMIT = PORFFOR_A21_PINS["alpha-25"].commit;
+export const PORFFOR_A26_CHANNEL = PORFFOR_A21_PINS["alpha-26"].channel;
+export const PORFFOR_A26_COMMIT_FULL = PORFFOR_A21_PINS["alpha-26"].commitFull;
+export const PORFFOR_A26_COMMIT = PORFFOR_A21_PINS["alpha-26"].commit;
 /** sha256 of the vendored patched tarball. */
-export const PORFFOR_A25_ARCHIVE_SHA256 = PORFFOR_A21_PINS["alpha-25"].archiveSha256;
-export const PORFFOR_A25_SERIES_SHA256 = PORFFOR_A21_PINS["alpha-25"].seriesSha256;
-export const PORFFOR_A25_NPM_VERSION = PORFFOR_A21_PINS["alpha-25"].npmVersion;
+export const PORFFOR_A26_ARCHIVE_SHA256 = PORFFOR_A21_PINS["alpha-26"].archiveSha256;
+export const PORFFOR_A26_SERIES_SHA256 = PORFFOR_A21_PINS["alpha-26"].seriesSha256;
+export const PORFFOR_A26_NPM_VERSION = PORFFOR_A21_PINS["alpha-26"].npmVersion;
 
-/** A compact identity string for a manifest / report (`alpha-25 (c9af40c)`). */
+/** A compact identity string for a manifest / report (`alpha-26 (8037e56)`). */
 export function porfforA21Version(channel: PorfforA21Channel = CURRENT_ALPHA): string {
   const p = PORFFOR_A21_PINS[channel];
   return `${p.channel} (${p.commit})`;
 }
 
-/** Feature level of the compiler's refusal of its own intrinsics in app code (patch 0026); a test checks it against the shipped tree's `REFUSAL_LEVEL`. */
-export const INTRINSIC_REFUSAL = 1;
+/** Feature level of the compiler's refusal of its own intrinsics in app code (patch 0025); a test checks it against the shipped tree's `REFUSAL_LEVEL`. Level 2 also refuses `node:ffi`. */
+export const INTRINSIC_REFUSAL = 2;

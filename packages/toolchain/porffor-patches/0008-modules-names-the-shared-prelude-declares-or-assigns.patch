@@ -17,7 +17,7 @@ Pass: patchPreludeOwnedGlobals (P4)
  1 file changed, 16 insertions(+)
 
 diff --git a/compiler/modules.js b/compiler/modules.js
-index 415c7d05ed34a636b550b8a9925162648e9f878b..51cdcaeb3640d906493a58b6ef2ddb095024a306 100644
+index 9a2b10a64e4058032054a6815d6f8c9a68d1bebd..c2c6c3aa541bbb92e27e0f24f7a2724822d2d630 100644
 --- a/compiler/modules.js
 +++ b/compiler/modules.js
 @@ -1597,6 +1597,22 @@ export default (entrySource, entryFile, opts = {}) => {

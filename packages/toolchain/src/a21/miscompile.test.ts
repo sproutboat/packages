@@ -4,9 +4,9 @@ import { join } from "node:path";
 import { extractPatchedTree } from "./patched-tree";
 
 // Three miscompiles the control-plane spike found on Porffor alpha 22 (postgres.js and drizzle-orm
-// run into all three; still there on alpha 23, 24 and 25, the stock repros fail on all three). Each program is
+// run into all three; still there on alpha 23 to 26, the stock repros fail on all three). Each program is
 // compiled to a native binary with the shipped patched tree.
-for (const channel of ["alpha-25"] as const) {
+for (const channel of ["alpha-26"] as const) {
   describe(channel, () => {
     let root = "";
     let work = "";
@@ -117,7 +117,7 @@ for (const channel of ["alpha-25"] as const) {
       expect(lines).toEqual(["number string string number numbernumber function5L"]);
     }, 60_000);
 
-    test("a function declared after a caller that was moved up is still declared first (Alchemy bundle shape)", async () => {
+    test("a function declared after a caller that was moved up is still declared first (Alchemy bundle shape; was P15, fixed upstream by e12413a4)", async () => {
       // A strict block moves a function up to just before its first use, in one pass. B moves above A, but B calls P, which
       // stayed behind it, and B generates its nested closures when it is declared: P was never found, never compiled, and the
       // call threw a TypeError with no message. Alchemy v2 bundles are init_Resource() / init_Output() / proxy() in this order.

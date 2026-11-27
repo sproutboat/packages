@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 import { PORFFOR_A21_PINS, type PorfforA21Channel } from "./pin";
 
 /** Test helper: the patched tree unpacked into a fresh canonical directory (macOS's /var -> /private/var symlink would change unit names). The caller removes it. */
-export async function extractPatchedTree(channel: PorfforA21Channel = "alpha-25"): Promise<string> {
+export async function extractPatchedTree(channel: PorfforA21Channel = "alpha-26"): Promise<string> {
   const pin = PORFFOR_A21_PINS[channel];
   const archive = resolve(import.meta.dir, "../../vendor", pin.vendoredArchive);
   const digest = createHash("sha256").update(readFileSync(archive)).digest("hex");

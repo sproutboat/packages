@@ -1,4 +1,4 @@
-/** `@sproutboat/toolchain/a21`: the Porffor line (alpha 25): pin, fingerprint, acquire, and the standalone build with its vendored server sources. */
+/** `@sproutboat/toolchain/a21`: the Porffor line (alpha 26): pin, fingerprint, acquire, and the standalone build with its vendored server sources. */
 export * from "./pin";
 export * from "./fingerprint";
 export * from "./acquire";
