@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, symlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -20,6 +20,13 @@ const tableStart = transport.indexOf("// BEGIN DB TABLE NATIVE"),
   tableEnd = transport.indexOf("// END DB TABLE NATIVE", tableStart);
 assert(ltxStart > 0 && ltxEnd > ltxStart && tableStart > ltxEnd && tableEnd > tableStart);
 const hasDiag = transport.includes("sb_diag_register");
+const hasHeap = transport.includes("sqlite3_hard_heap_limit64(");
+// The real call sites of the statement diagnostics (sb_sql_script, sb_sql_error), compiled from the transport itself.
+const replyStart = transport.indexOf("// BEGIN SQL REPLY NATIVE"),
+  replyEnd = transport.indexOf("// END SQL REPLY NATIVE", replyStart);
+const scriptStart = transport.indexOf("// BEGIN SQL SCRIPT NATIVE"),
+  scriptEnd = transport.indexOf("// END SQL SCRIPT NATIVE", scriptStart);
+const hasScript = replyStart > 0 && replyEnd > replyStart && scriptStart > replyEnd && scriptEnd > scriptStart;
 const work = await mkdtemp(join(tmpdir(), "sb-native-landlock-"));
 const source = `
 #define _GNU_SOURCE
@@ -45,6 +52,7 @@ static char sb_db_names[SB_MAX_DB][256];
 static int sb_db_count = 0;
 ${transport.slice(ltxStart, ltxEnd)}
 ${transport.slice(tableStart, tableEnd)}
+${hasScript ? "#define SB_SQLITE_ROW 100\n#define SB_SQLITE_DONE 101\n" + transport.slice(replyStart, replyEnd) + transport.slice(scriptStart, scriptEnd) : ""}
 
 // The worker's ruleset in shape: every filesystem right handled, all of them (but execute) granted under DIR, read on /dev/urandom.
 static int restrict_like_worker(const char* dir) {
@@ -148,11 +156,82 @@ int main(int argc, char** argv) {
     printf("{\\"rc\\":%d}\\n", ext);
     return 0;
   }
-  if (!strcmp(scenario, "tempfile")) {
+  if (!strcmp(scenario, "sort-survive")) {
+    // under a small memory limit the big sort is refused (SQLITE_NOMEM), and the worker goes on: the same connection answers
+    // a small query, a top-N sort and a count, and a second big sort fails the same way
+    int big = drain(db, "SELECT payload FROM t ORDER BY payload", &rows);
+    long after = 0, topn = 0, count = 0;
+    int small = drain(db, "SELECT k FROM t WHERE k < 100", &after);
+    int top = drain(db, "SELECT payload FROM t ORDER BY payload LIMIT 10", &topn);
+    int again = drain(db, "SELECT payload FROM t ORDER BY payload", &count);
+    int tt = run(db, "CREATE TEMP TABLE tt AS SELECT * FROM t") ? sqlite3_extended_errcode(db) : 0;
+    long left = 0;
+    int ok = drain(db, "SELECT k FROM t WHERE k < 100", &left);
+    printf("{\\"big\\":%d,\\"small\\":%d,\\"smallRows\\":%ld,\\"top\\":%d,\\"topRows\\":%ld,\\"again\\":%d,\\"temptable\\":%d,\\"after\\":%d,\\"afterRows\\":%ld}\\n", big, small, after, top, topn, again, tt, ok, left);
+    return 0;
+  }
+  if (!strcmp(scenario, "stmtjrnl-file")) {
+    // a tenant's own PRAGMA temp_store=FILE: the statement journal still stays in memory (the sort would not, see "tempfile")
+    run(db, "PRAGMA temp_store=FILE");
+    int rc = run(db, "BEGIN") || run(db, "UPDATE t SET k = k + 100000");
+    int ext = rc ? sqlite3_extended_errcode(db) : 0;
+    run(db, "ROLLBACK");
+    printf("{\\"rc\\":%d}\\n", ext);
+    return 0;
+  }
+  if (!strcmp(scenario, "wal-fail")) {
+    // The first pragmas of a new connection fail (journal_mode=WAL: its -wal is a directory), through sb_db_for's own check
+    char wal[700], other[700];
+    snprintf(other, sizeof other, "%s/d1/w.sqlite", dir);
+    snprintf(wal, sizeof wal, "%s-wal", other);
+    mkdir(wal, 0700);
+    int w = sb_db_for(other);
+    printf("{\\"idx\\":%d}\\n", w);
+    return 0;
+  }
+  if (!strcmp(scenario, "logline")) {
+    // SQLite's own log, through the callback sb_sqlite_boot installed: the path of a failed call is shown as the others are
+    sqlite3_log(SQLITE_IOERR_WRITE, "os_unix.c:%d: (%d) %s(%s) - %s", 4242, 13, "write", dbpath, "Permission denied");
+    sqlite3_log(SQLITE_IOERR_READ, "os_unix.c:%d: (%d) %s(%s) - %s", 4243, 5, "read", "/home/someone/secret-layout/other.sqlite-wal", "Input/output error");
+    sqlite3_log(SQLITE_CANTOPEN, "statement aborts at %d: [%s] %s", 3, "SELECT 'TOPSECRET-SQL-LITERAL'", "unable to open database file");
+    sqlite3_log(SQLITE_CANTOPEN, "cannot open file at line %d of [%s]", 99, "0123456789abcdef");
+    printf("{\\"ok\\":1}\\n");
+    return 0;
+  }
+${
+  hasScript
+    ? `  if (!strcmp(scenario, "script")) {
+    // through sb_sql_script (the host's exec call): a statement that needs a temporary file the ruleset refuses
+    run(db, "PRAGMA temp_store=FILE");
+    char* reply = sb_sql_script(dbpath, "SELECT payload, 'TOPSECRET-SQL-LITERAL' FROM t ORDER BY payload");
+    printf("{\\"reply\\":%s}\\n", reply);
+    return 0;
+  }
+  if (!strcmp(scenario, "error")) {
+    // through sb_sql_error (every other call): the statement fails at step, then the reply is built, and LTX's own failure is no I/O error
+    run(db, "PRAGMA temp_store=FILE");
+    sqlite3_stmt* st = 0;
+    sqlite3_prepare_v2(db, "SELECT payload, 'TOPSECRET-SQL-LITERAL' FROM t ORDER BY payload", -1, &st, 0);
+    while (sqlite3_step(st) == SQLITE_ROW) {}
+    char* reply = sb_sql_error(db, 0, -1, 0);
+    sqlite3_finalize(st);
+    printf("{\\"reply\\":%s}\\n", reply);
+    return 0;
+  }
+  if (!strcmp(scenario, "error-ltx")) {
+    // an error that is the replication's own is not reported as SQLite's last errno, even with an I/O error on the connection
+    run(db, "PRAGMA temp_store=FILE");
+    drain(db, "SELECT payload FROM t ORDER BY payload", &rows);
+    char* reply = sb_sql_error(db, SB_LTX_FAILED, 10, 0);
+    printf("{\\"reply\\":%s}\\n", reply);
+    return 0;
+  }
+`
+    : ""
+}  if (!strcmp(scenario, "tempfile")) {
     // the old behaviour on purpose, with a statement that names row data and a literal: the failure must be reported without either
     run(db, "PRAGMA temp_store=FILE");
     int rc = drain(db, "SELECT payload, 'TOPSECRET-SQL-LITERAL' FROM t ORDER BY payload", &rows);
-    ${hasDiag ? "if (rc) sb_diag_failure(db, rc);" : ""}
     printf("{\\"rc\\":%d}\\n", rc);
     return 0;
   }
@@ -183,8 +262,11 @@ const compile = Bun.spawnSync(
 assert.equal(compile.exitCode, 0, compile.stderr.toString());
 
 // A worker has an empty environment but for what the host sets: no TMPDIR, no SQLITE_TMPDIR.
-async function run(scenario: string, dir: string) {
-  const p = Bun.spawnSync([binary, dir, scenario], { env: { PATH: process.env.PATH ?? "", SB_DATA_DIR: dir } });
+// dataDir is what the host puts in SB_DATA_DIR (it may spell dir differently); extra adds environment (the memory limit).
+async function run(scenario: string, dir: string, dataDir = dir, extra: Record<string, string> = {}) {
+  const p = Bun.spawnSync([binary, dir, scenario], {
+    env: { PATH: process.env.PATH ?? "", SB_DATA_DIR: dataDir, ...extra },
+  });
   const stdout = p.stdout.toString().trim();
   const stderr = p.stderr.toString();
   assert.equal(p.exitCode, 0, `${scenario}: exit ${p.exitCode} ${stdout} ${stderr}`);
@@ -192,7 +274,10 @@ async function run(scenario: string, dir: string) {
 }
 const lines = (stderr: string) => stderr.split("\n").filter((l) => l.startsWith("sproutd-sqlite:"));
 try {
-  const dir = join(work, "myapp");
+  // The state root is reached through a symlink (state -> state-real), as a host whose state directory moved disks would have it.
+  const dir = join(work, "state-real", "myapp");
+  await mkdir(join(work, "state-real"), { recursive: true });
+  await symlink(join(work, "state-real"), join(work, "state"));
   await run("seed", dir);
   const landlock = Bun.spawnSync([binary, dir, "open-outside"], {
     env: { PATH: process.env.PATH ?? "", SB_DATA_DIR: dir },
@@ -218,30 +303,59 @@ try {
   assert.deepEqual(failed, [], "a temporary file was needed under Landlock (rc 14 is SQLITE_CANTOPEN)");
   for (const r of Object.values(spills)) assert.deepEqual(lines(r.stderr), [], "no diagnostic line when nothing fails");
 
+  // No host path on any line: not the real state root, not its symlink, not the work directory around them.
+  const noHostPath = (stderr: string) => {
+    for (const bad of [work, "state-real", "/state/"])
+      assert(!stderr.includes(bad), `host path ${bad} on stderr: ${stderr}`);
+    assert(!stderr.includes("TOPSECRET"), `no SQL text or row data on stderr: ${stderr}`);
+    assert(!stderr.includes("statement aborts"), stderr);
+  };
+
+  if (hasHeap) {
+    // A hard heap limit of a quarter of the memory limit (8 MiB at 32 MiB): the 10 MiB sort and the temporary table are refused with
+    // SQLITE_NOMEM (7) and the same connection, and the process, go on. Without a limit (the runs above) 256 MiB: they succeed.
+    const small = await run("sort-survive", dir, dir, {
+      SB_MEMORY_LIMIT: String(32 << 20),
+    });
+    assert.deepEqual(
+      small.out,
+      {
+        big: 7,
+        small: 0,
+        smallRows: 99,
+        top: 0,
+        topRows: 10,
+        again: 7,
+        temptable: 7,
+        after: 0,
+        afterRows: 99,
+      },
+      JSON.stringify(small.out),
+    );
+    assert.deepEqual(lines(small.stderr), [], "no diagnostic line for an out-of-memory statement");
+    // 64 MiB of limit is 16 MiB of heap: the 10 MiB sort fits
+    const roomy = await run("sort", dir, dir, {
+      SB_MEMORY_LIMIT: String(64 << 20),
+    });
+    assert.deepEqual(roomy.out, { rc: 0, rows: 30000 });
+  }
+  // a statement journal needs no file even when a tenant sets temp_store=FILE
+  assert.equal((await run("stmtjrnl-file", dir)).out.rc, 0);
+
   if (hasDiag) {
-    // A temporary file the ruleset refuses (temp_store=FILE again), through a statement with a literal and row data: the open, the
-    // log and the statement are reported by what failed, and neither the SQL nor a row is in any line. The database is shown
-    // relative to the data directory.
+    // A temporary file the ruleset refuses (temp_store=FILE again), through a statement with a literal and row data: the open and
+    // the log are reported by what failed, and neither the SQL nor a row is in any line. A path outside the data directory is shown
+    // as its basename only.
     const spill = await run("tempfile", dir);
     assert.equal(spill.out.rc & 0xff, 14, `${JSON.stringify(spill.out)} ${spill.stderr}`);
-    const all = lines(spill.stderr);
     assert(
-      all.some((l) =>
-        /^sproutd-sqlite: app=myapp open:rw\+creat errno=13 \(Permission denied\) file=\/(var\/tmp|usr\/tmp|tmp)\/etilqs_\w+$/.test(
-          l,
-        ),
+      lines(spill.stderr).some((l) =>
+        /^sproutd-sqlite: app=myapp open:rw\+creat errno=13 \(Permission denied\) file=<outside>\/etilqs_\w+$/.test(l),
       ),
       spill.stderr,
     );
-    assert(
-      all.some((l) =>
-        /^sproutd-sqlite: app=myapp stmt rc=14 errno=\d+ \([^)]+\) file=\$DATA\/d1\/app\.sqlite$/.test(l),
-      ),
-      spill.stderr,
-    );
-    assert(!spill.stderr.includes("TOPSECRET"), `no SQL text or row data on stderr: ${spill.stderr}`);
-    assert(!spill.stderr.includes(dir), `no host path on stderr: ${spill.stderr}`);
-    assert(!spill.stderr.includes("statement aborts"), spill.stderr);
+    noHostPath(spill.stderr);
+    assert(!/file=\/(var\/tmp|usr\/tmp|tmp)\//.test(spill.stderr), spill.stderr);
 
     // The first open fails, and SQLite retries it read-only: a line for each call with its own errno (EACCES, then ENOENT)
     const outside = await run("open-outside", dir);
@@ -250,12 +364,13 @@ try {
     assert.equal(open.length, 2, outside.stderr);
     assert.match(
       open[0],
-      /^sproutd-sqlite: app=myapp open:rw\+creat errno=13 \(Permission denied\) file=\/tmp\/sb-landlock-outside-\d+\.sqlite$/,
+      /^sproutd-sqlite: app=myapp open:rw\+creat errno=13 \(Permission denied\) file=<outside>\/sb-landlock-outside-\d+\.sqlite$/,
     );
     assert.match(
       open[1],
-      /^sproutd-sqlite: app=myapp open:ro errno=2 \(No such file or directory\) file=\/tmp\/sb-landlock-outside-\d+\.sqlite$/,
+      /^sproutd-sqlite: app=myapp open:ro errno=2 \(No such file or directory\) file=<outside>\/sb-landlock-outside-\d+\.sqlite$/,
     );
+    assert(!outside.stderr.includes("/tmp"), outside.stderr);
 
     // 50 failing opens (two calls each) in a burst: SB_DIAG_BURST lines, then the count with the next line after the window
     const burst = await run("open-burst", dir);
@@ -266,6 +381,61 @@ try {
       b.slice(0, 5).every((l) => !l.includes("suppressed")),
       burst.stderr,
     );
+
+    // SQLite's own log for a failed call: the path is shown as $DATA/... or its basename; the statement text never appears; and
+    // no errno is invented (-)
+    const log = lines((await run("logline", dir)).stderr);
+    assert.deepEqual(log, [
+      "sproutd-sqlite: app=myapp log rc=778 errno=- file=os_unix.c:4242: (13) write($DATA/d1/app.sqlite) - Permission denied",
+      "sproutd-sqlite: app=myapp log rc=266 errno=- file=os_unix.c:4243: (5) read(<outside>/other.sqlite-wal) - Input/output error",
+    ]);
+
+    // A failing journal_mode=WAL when a connection opens (the check in sb_db_for): its -wal is a directory
+    const wal = await run("wal-fail", dir);
+    const w = lines(wal.stderr);
+    assert(
+      w.some((l) =>
+        /^sproutd-sqlite: app=myapp stmt rc=\d+ errno=21 \(Is a directory\) file=\$DATA\/d1\/w\.sqlite$/.test(l),
+      ),
+      wal.stderr,
+    );
+    assert(
+      w.some((l) =>
+        /^sproutd-sqlite: app=myapp log rc=\d+ errno=- file=os_unix\.c:\d+: \(21\) unlink\(\$DATA\/d1\/w\.sqlite-wal\) - $/.test(
+          l,
+        ),
+      ),
+      wal.stderr,
+    );
+    noHostPath(wal.stderr);
+
+    if (hasScript) {
+      // The statement line through the real call sites, and the data directory spelled three ways (as configured, through the
+      // symlink, and unnormalised): SQLite names the file by its real path every time, and the line must still say $DATA.
+      const spellings = [dir, join(work, "state", "myapp"), join(work, "state") + "//./myapp/"];
+      for (const dataDir of spellings) {
+        for (const scenario of ["script", "error"]) {
+          const r = await run(scenario, dir, dataDir);
+          assert.equal(r.out.reply.ok, false, `${scenario} ${dataDir}: ${JSON.stringify(r.out)}`);
+          assert.equal(r.out.reply.code & 0xff, 14, JSON.stringify(r.out));
+          assert(
+            lines(r.stderr).some((l) =>
+              /^sproutd-sqlite: app=myapp stmt rc=14 errno=\d+ \([^)]+\) file=\$DATA\/d1\/app\.sqlite$/.test(l),
+            ),
+            `${scenario} ${dataDir}: ${r.stderr}`,
+          );
+          noHostPath(r.stderr);
+          assert(!JSON.stringify(r.out).includes("TOPSECRET"), JSON.stringify(r.out));
+        }
+        // the data directory's own name is the app (the link is not)
+        const open = await run("open-outside", dir, dataDir);
+        noHostPath(open.stderr);
+      }
+      // the replication's own failure is not SQLite's last errno: the io error on the connection stays out of its reply
+      const ltx = await run("error-ltx", dir);
+      assert.equal(ltx.out.reply.code, 10);
+      assert(!lines(ltx.stderr).some((l) => l.includes(" stmt ")), ltx.stderr);
+    }
   }
   console.log("native-sqlite-landlock ok", hasDiag ? "(diagnostics checked)" : "(no diagnostics in this transport)");
 } finally {
