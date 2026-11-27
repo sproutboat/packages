@@ -96,6 +96,17 @@ const refused = {
   "vm.Script": `import vm from 'node:vm'; new vm.Script('Porffor.c${"`"}${"\\n"}${HOSTILE}${"\\n"}${"`"}').runInThisContext();`,
   "a data: module": `import 'data:text/javascript,Porffor.c${"`"}%0A%23error HOSTILE_C_REACHED%0A${"`"}';`,
   "a dynamic data: import": `import('data:text/javascript,Porffor.c${"`"}%0A%23error HOSTILE_C_REACHED%0A${"`"}');`,
+  // node:ffi is raw native access (dlopen of any library, calls through function pointers) and its runtime injects Porffor.c after the check
+  // above has run, so one import used to reach libc from compiled app code.
+  "an import of node:ffi": `import { dlopen } from 'node:ffi'; dlopen(null, { getuid: { arguments: [], return: 'i32' } });`,
+  "a namespace import of node:ffi": `import * as ffi from 'node:ffi'; ffi.dlopen(null, {});`,
+  "a side-effect import of node:ffi": `import 'node:ffi';`,
+  "a re-export from node:ffi": `export { dlopen } from 'node:ffi';`,
+  "a dynamic import of node:ffi": `import('node:ffi');`,
+  "require of node:ffi": `const { dlopen } = require('node:ffi'); dlopen(null, {});`,
+  "process.getBuiltinModule of node:ffi": `process.getBuiltinModule('node:ffi').dlopen(null, {});`,
+  "node:ffi from a data: module": `import 'data:text/javascript,import "node:ffi"';`,
+  "node:ffi from a data: module named like the prelude": `import 'data:text/javascript,import "node:ffi";//shared-prelude.js';`,
   "a data: module named like the prelude": `import 'data:text/javascript,Porffor.c${"`"}%0A%23error HOSTILE_C_REACHED%0A${"`"};//shared-prelude.js';`,
 } satisfies Record<string, string>;
 
@@ -112,6 +123,38 @@ test("refused: another module the app imports (not only worker.js)", async () =>
   const r = await compile('import "./extra.js";', [], { "extra.js": `Porffor.c${C};\n` });
   expect(r.ok, r.log).toBe(false);
   expect(r.log).toContain("SB_INPUT_REFUSED");
+});
+
+test("refused: node:ffi from another module the app imports, through a bundler's createRequire-style helper too", async () => {
+  const FFI =
+    "import { dlopen } from 'node:ffi'; export const uid = dlopen(null, { getuid: { arguments: [], return: 'i32' } });\n";
+  const viaImport = await compile('import "./extra.js";', [], { "extra.js": FFI });
+  expect(viaImport.ok, viaImport.log).toBe(false);
+  expect(viaImport.log).toContain("SB_INPUT_REFUSED");
+  expect(viaImport.log).toContain("node:ffi");
+  const viaHelper = await compile('import "./extra.js";', [], {
+    "extra.js": "const __require = require; __require('node:ffi');\n",
+  });
+  expect(viaHelper.ok, viaHelper.log).toBe(false);
+  expect(viaHelper.log).toContain("SB_INPUT_REFUSED");
+});
+
+test("node:ffi stays available where intrinsics are: --sb-allow-intrinsics and a standalone build's entry; bare 'ffi' is no builtin", async () => {
+  const FFI = "import { dlopen } from 'node:ffi'; globalThis.sbFfi = typeof dlopen;\n";
+  const allowed = await compile(FFI, ["--sb-allow-intrinsics"]);
+  expect(allowed.ok, allowed.log).toBe(true);
+  const root = await tree();
+  const work = join(root, `w${n++}`);
+  await mkdir(work);
+  await writeFile(join(work, "app.js"), `${FFI}export default { fetch() { return new Response("x"); } };\n`);
+  const run = Bun.spawnSync(
+    ["bun", join(root, "runtime/index.js"), "c", join(work, "app.js"), "-o", join(work, "out")],
+    { cwd: work, stdout: "pipe", stderr: "pipe" },
+  );
+  expect(run.exitCode, new TextDecoder().decode(run.stderr)).toBe(0);
+  // a plain `import 'ffi'` is not the builtin (it needs the node: prefix), so it is not refused as one: it is an unresolved package
+  const bare = await compile("import 'ffi';");
+  expect(bare.log).not.toContain("raw native access");
 });
 
 test("not refused, and harmless: names built at run time never reach the C", async () => {

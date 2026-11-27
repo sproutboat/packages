@@ -53,5 +53,5 @@ export function porfforA21Version(channel: PorfforA21Channel = CURRENT_ALPHA): s
   return `${p.channel} (${p.commit})`;
 }
 
-/** Feature level of the compiler's refusal of its own intrinsics in app code (patch 0026); a test checks it against the shipped tree's `REFUSAL_LEVEL`. */
-export const INTRINSIC_REFUSAL = 1;
+/** Feature level of the compiler's refusal of its own intrinsics in app code (patch 0025); a test checks it against the shipped tree's `REFUSAL_LEVEL`. Level 2 also refuses `node:ffi`. */
+export const INTRINSIC_REFUSAL = 2;

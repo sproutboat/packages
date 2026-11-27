@@ -376,6 +376,60 @@ test("JSON.parse of a large document with wide strings runs on the shipped alpha
   expect(out.trim()).toBe("637781 12000 naïve 中文 x11999");
 }, 180_000);
 
+test("0017: freezing the megamorphic cache drops entries whose key is not static data, keeps the rest, and stores nothing after", async () => {
+  // Alpha 26 matches a cache entry by shape and key POINTER. A key on the heap could sit on a free run that a worker hands out again for another
+  // string, so the freeze keeps only entries whose key lies in static data (below porf_static_end) and a pointer always means the same bytes.
+  const root = await patched();
+  const work = join(root, "work-freeze");
+  await mkdir(work);
+  await writeFile(
+    join(work, "freeze.js"),
+    [
+      "function census() {",
+      "  let nHeap = 0, nStatic = 0;",
+      "  Porffor.c`for (u32 n = 0; n < 4096; n++) {",
+      "    if (icMega == 0) break;",
+      "    u8* e = MEM + icMega + n * 20;",
+      "    u32 shape; memcpy(&shape, e, 4);",
+      "    u32 key; memcpy(&key, e + 16, 4);",
+      "    if (shape == 0) continue;",
+      "    if (key < porf_static_end) nStatic++; else nHeap++;",
+      "  }`;",
+      "  return nHeap + ',' + nStatic;",
+      "}",
+      "const heapKey = ['k', 'x'].join('');",
+      "const staticKey = 'kx';",
+      "__Porffor_object_icStoreMega(7, 11, Porffor.IR.ptr(heapKey), 0, 0, 5);",
+      "__Porffor_object_icStoreMega(8, 12, Porffor.IR.ptr(staticKey), 0, 0, 5);",
+      "console.log('before', census());",
+      "__Porffor_object_icFreezeMega();",
+      "console.log('after', census());",
+      "__Porffor_object_icStoreMega(9, 13, Porffor.IR.ptr(heapKey), 0, 0, 5);",
+      "__Porffor_object_icStoreMega(10, 14, Porffor.IR.ptr(staticKey), 0, 0, 5);",
+      "console.log('frozen', census());",
+    ].join("\n"),
+  );
+  const compile = Bun.spawn(
+    [
+      "bun",
+      join(root, "runtime/index.js"),
+      "native",
+      join(work, "freeze.js"),
+      "-o",
+      join(work, "freeze"),
+      "-O0",
+      "--sb-allow-intrinsics",
+    ],
+    { cwd: work, stdout: "pipe", stderr: "pipe" },
+  );
+  expect(await compile.exited, await new Response(compile.stderr).text()).toBe(0);
+  const run = Bun.spawn([join(work, "freeze")], { stdout: "pipe", stderr: "pipe" });
+  const [code, out] = await Promise.all([run.exited, new Response(run.stdout).text()]);
+  expect(code).toBe(0);
+  // "heap entries,static entries"
+  expect(out.trim().split("\n")).toEqual(["before 1,1", "after 0,1", "frozen 0,1"]);
+}, 180_000);
+
 test("P14: runtime globals are pinned to the template's set, and a free reference outside it is a compile error", async () => {
   const root = await patched();
   // The shared prelude owns performance and process (P4, as in sproutd) and names MessageEvent and every builtin the apps use:

@@ -10,29 +10,45 @@ of its 20 pages per worker. The template freezes it after its warm-up (__Porffor
 workers read the template's entries and never write one. Open upstream IC rewrites (#420, #421)
 would touch the same code.
 
+Since alpha 26 an entry matches by shape and key pointer (upstream a360d7f2), not by key hash, so a pointer has to mean the same bytes in
+every worker. Freezing therefore drops every entry whose key pointer is not in static data (below porf_static_end: shared, immutable): a key
+on the template heap could sit on a free run a worker reuses for another string, which would hit the frozen entry with no content check.
+
 Class: ours
 Pass: patchIcMegaFreeze
 ---
- compiler/builtins/_internal_object.ts | 6 ++++++
- 1 file changed, 6 insertions(+)
+ compiler/builtins/_internal_object.ts | 18 ++++++++++++++++++
+ 1 file changed, 18 insertions(+)
 
 diff --git a/compiler/builtins/_internal_object.ts b/compiler/builtins/_internal_object.ts
-index 240a9f9d40c8b70196b43d406cd335836ba34c87..a026240699a966c86f5bc3743d9cda545a174827 100644
+index 240a9f9d40c8b70196b43d406cd335836ba34c87..9eea6d53c6f377947941756a10428cab8c3f7bf9 100644
 --- a/compiler/builtins/_internal_object.ts
 +++ b/compiler/builtins/_internal_object.ts
-@@ -1396,6 +1396,11 @@ export const __Porffor_object_getWithReceiver = (obj: any, key: any, receiver: a
+@@ -1396,6 +1396,23 @@ export const __Porffor_object_getWithReceiver = (obj: any, key: any, receiver: a
  //   holder shape only for data slots of shaped holders, epoch -1 for the receiver's own prototype, else icEpoch
  // icMega: misses shared by all sites, the same 4 words (epoch -2: own) then the key pointer, as keys can share a hash
  let icMega: i32 = 0;
 +// sproutboat: frozen megamorphic cache
 +let icMegaFrozen: i32 = 0;
++// An entry matches by shape and key POINTER, so a pointer must always mean the same bytes in every worker: only keys in static data (below
++// porf_static_end: shared, immutable) keep their entries. A key on the template heap may sit on a free run that a worker reuses for another string,
++// which would then hit the frozen entry with no content check, so those entries are dropped when freezing.
 +export const __Porffor_object_icFreezeMega = (): void => {
++  if (icMega != 0) {
++    for (let n: i32 = 0; n < 4096; n++) {
++      const p: i32 = icMega + n * 20;
++      const keyPtr: i32 = Porffor.IR.loadI32(p, 16);
++      let isStatic: i32 = 0;
++      Porffor.c`isStatic = (u32)keyPtr < porf_static_end;`;
++      if (isStatic == 0) Porffor.IR.fill(p, 0, 20);
++    }
++  }
 +  icMegaFrozen = 1;
 +};
  
  // a cached read's slot index + 1 in its holder (p + 4, else obj for own), -1 when absent, 0 when stale
  export const __Porffor_object_icEntry = (obj: i32, p: i32, hash: i32): i32 => {
-@@ -1602,6 +1607,7 @@ export const __Porffor_object_icFlagChainTo = (obj: any, holder: any): void => {
+@@ -1602,6 +1619,7 @@ export const __Porffor_object_icFlagChainTo = (obj: any, holder: any): void => {
  };
  
  export const __Porffor_object_icStoreMega = (shape: i32, hash: i32, keyPtr: i32, holder: i32, i: i32, epoch: i32): void => {
