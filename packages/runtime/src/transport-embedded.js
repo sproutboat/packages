@@ -2054,6 +2054,95 @@ static long sb_db_changes0[SB_MAX_DB];
 static unsigned long sb_stat_closes, sb_stat_busy, sb_stat_ckpt_fail, sb_stat_grow, sb_stat_shrink, sb_stat_opens;
 static long sb_stat_open_us_last, sb_stat_open_us_max;
 
+// ---- Failure diagnostics (a rare production "unable to open database file" left no trace of which file or errno) ----
+// SQLite reports SQLITE_CANTOPEN for every failed open(2) of a database, -wal, -shm or temporary file, with no hint which one or why,
+// and its own retry (read-only after read-write) overwrites the first errno. Three sources, one stderr line each (the host stores a
+// worker's stderr in the app's log), never row data:
+//   open  every open(2) the unix VFS makes that fails, through its system-call table: the flags, the errno of that very call and the
+//         path, whether it is the database, its -wal or -shm, a temporary file or a journal
+//   log   SQLite's error log, only its os_unix.c lines for a failed read, write, sync, mmap and the like (they name the file)
+//   stmt  a statement that failed with CANTOPEN or an I/O error: the database file and SQLite's last system errno
+// The line is: sproutd-sqlite: app=ID WHAT [rc=N] errno=E (text) file=PATH. ID is the data directory's name; a path under the data
+// directory is shown relative to it ($DATA/...), so the line carries no host layout. At most SB_DIAG_BURST lines per
+// SB_DIAG_WINDOW_MS; the rest are counted and the next line says suppressed=N.
+#ifndef SB_DIAG_BURST
+#define SB_DIAG_BURST 5
+#endif
+#ifndef SB_DIAG_WINDOW_MS  // the regression shortens it
+#define SB_DIAG_WINDOW_MS 60000
+#endif
+static long sb_diag_window_ms = -1;
+static int sb_diag_lines = 0;
+static unsigned long sb_diag_dropped = 0;
+static int (*sb_diag_real_open)(const char*, int, int);
+extern int sqlite3_system_errno(sqlite3*);
+extern const char* sqlite3_db_filename(sqlite3*, const char*);
+// SRC with the data directory cut to $DATA and anything that is not printable text replaced, into OUT.
+static void sb_diag_text(char* out, size_t cap, const char* src) {
+  const char* data = getenv("SB_DATA_DIR");
+  size_t dl = data ? strlen(data) : 0, n = 0;
+  if (dl > 1 && data[dl - 1] == '/') dl--;
+  for (; src && *src && n + 8 < cap; src++) {
+    if (dl > 1 && !strncmp(src, data, dl) && (src[dl] == '/' || !src[dl])) { memcpy(out + n, "$DATA", 5); n += 5; src += dl - 1; continue; }
+    out[n++] = (unsigned char)*src >= 0x20 && (unsigned char)*src < 0x7f ? *src : '?';
+  }
+  out[n] = 0;
+}
+static void sb_diag(const char* what, int rc, int err, const char* file) {
+  struct timespec t;
+  clock_gettime(CLOCK_MONOTONIC, &t);
+  long now = (long)t.tv_sec * 1000 + t.tv_nsec / 1000000;
+  if (sb_diag_window_ms < 0 || now - sb_diag_window_ms >= SB_DIAG_WINDOW_MS) { sb_diag_window_ms = now; sb_diag_lines = 0; }
+  if (sb_diag_lines >= SB_DIAG_BURST) { sb_diag_dropped++; return; }
+  sb_diag_lines++;
+  const char* data = getenv("SB_DATA_DIR");
+  const char* app = data ? strrchr(data, '/') : 0;
+  app = app && app[1] ? app + 1 : data && *data ? data : "?";
+  char id[80], path[320], text[96] = "", code[24] = "";
+  sb_diag_text(id, sizeof(id), app);
+  sb_diag_text(path, sizeof(path), file && *file ? file : "(none)");
+  if (err > 0) snprintf(text, sizeof(text), " (%s)", strerror(err));
+  if (rc) snprintf(code, sizeof(code), " rc=%d", rc);
+  char dropped[40] = "";
+  if (sb_diag_dropped) { snprintf(dropped, sizeof(dropped), " suppressed=%lu", sb_diag_dropped); sb_diag_dropped = 0; }
+  fprintf(stderr, "sproutd-sqlite: app=%s %s%s errno=%d%s file=%s%s\n", id, what, code, err, text, path, dropped);
+}
+static void sb_diag_failure(sqlite3* db, int rc) {
+  int primary = rc & 0xff;
+  if (!db || (primary != 14 && primary != 10)) return;
+  int err = sqlite3_system_errno(db);
+  sb_diag("stmt", rc, err ? err : errno, sqlite3_db_filename(db, "main"));
+}
+static void sb_diag_log(void* arg, int rc, const char* msg) {
+  (void)arg;
+  int primary = rc & 0xff;
+  // By prefix, never by code alone: "statement aborts at N: [SQL] ..." carries the statement text, literals and all. An open is
+  // reported by sb_diag_open with its own errno, so the log's line for it is left out.
+  if ((primary != 14 && primary != 10) || !msg || strncmp(msg, "os_unix.c:", 10) != 0 || strstr(msg, ") open(")) return;
+  sb_diag("log", rc, 0, msg);
+}
+static int sb_diag_open(const char* path, int flags, int mode) {
+  int fd = sb_diag_real_open(path, flags, mode);
+  if (fd < 0) {
+    int err = errno;
+    char what[40];
+    snprintf(what, sizeof(what), "open:%s%s", (flags & 3) == 0 ? "ro" : "rw", flags & 0100 ? "+creat" : "");
+    sb_diag(what, 0, err, path);
+    errno = err;
+  }
+  return fd;
+}
+// Replaces open in the unix VFS's system-call table (sqlite3_vfs.xSetSystemCall; the call is how every file, journal, -wal, -shm and
+// temporary file is opened, so no per-file wrapper and no cost but the failure). After the config calls: it starts SQLite.
+static void sb_diag_register(void) {
+  sqlite3_vfs *v = sqlite3_vfs_find(0);
+  if (!v || v->iVersion < 3 || !v->xGetSystemCall || !v->xSetSystemCall) return;
+  void (*real)(void) = v->xGetSystemCall(v, "open");
+  if (!real) return;
+  sb_diag_real_open = (int (*)(const char*, int, int))real;
+  v->xSetSystemCall(v, "open", (void (*)(void))sb_diag_open);
+}
+
 // SQLite allocates 20 pages in one block for every page cache it creates, and a statement that
 // builds a temporary table (INSERT ... RETURNING, a sort) creates one: an 88 KiB mmap and munmap
 // per such statement. A page count of 0 turns the bulk allocation off; the cache then takes
@@ -2064,6 +2153,13 @@ static void sb_sqlite_boot(void) {
   if (sb_sqlite_booted) return;
   sb_sqlite_booted = 1;
   sqlite3_config(7 /* SQLITE_CONFIG_PAGECACHE */, (void*)0, 0, 0);
+  // A worker may not create a file outside its data directory (Landlock), and SQLite would otherwise open a temporary file for a statement
+  // journal over 64 KiB, and (with temp_store=MEMORY, set per connection) for a sort or a temporary table that outgrows the page cache:
+  // open(2) fails with EACCES and the statement with SQLITE_CANTOPEN ("unable to open database file"). A negative threshold keeps
+  // statement journals in memory. The error log and the VFS shim above make any failure that is left name its file.
+  sqlite3_config(16 /* SQLITE_CONFIG_LOG */, sb_diag_log, (void*)0);
+  sqlite3_config(26 /* SQLITE_CONFIG_STMTJRNL_SPILL */, -1);
+  sb_diag_register();
   const char* mb = getenv("SB_SQLITE_CACHE_MB");
   long mib = mb && *mb ? strtol(mb, 0, 10) : 0;
   if (mib >= 1 && mib <= 4096) sb_cache_fixed_kb = (int)(mib * 1024);
@@ -2227,10 +2323,13 @@ static int sb_db_for(const char* path) {
     const int kb = sb_cache_fixed_kb ? sb_cache_fixed_kb : (SB_CACHE_START_KB < share ? SB_CACHE_START_KB : share);
     sb_cache_set(slot, kb);
   }
-  sqlite3_exec(db,
-    "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;"
+  // temp_store=MEMORY: a sort or temporary table too big for the page cache must not open a temporary file, which the worker may not
+  // create outside its data directory. The result is checked because a failure here (WAL needs the -wal file) used to leave no trace.
+  const int pragma_rc = sqlite3_exec(db,
+    "PRAGMA temp_store=MEMORY; PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL; PRAGMA busy_timeout=5000;"
     "PRAGMA journal_size_limit=16777216;",
     0, 0, 0);
+  if (pragma_rc) sb_diag_failure(db, sqlite3_extended_errcode(db));
   // Durable Object SQLite enforces foreign keys, as in workerd.
   if (do_sql) sqlite3_exec(db, "PRAGMA foreign_keys=ON", 0, 0, 0);
   sb_db_changes0[slot] = sqlite3_total_changes(db);
@@ -3354,6 +3453,7 @@ static char* sb_sql_script(const char* path, const char* sql) {
     if (script_rc) { failure_code = sqlite3_extended_errcode(sb_dbs[idx]); failure_offset = sqlite3_error_offset(sb_dbs[idx]); }
   }
   if (script_rc != 0) {
+    if (!quota_full && !capture_failed) sb_diag_failure(sb_dbs[idx], failure_code);
     const char* m = quota_full ? SB_QUOTA_FULL : capture_failed ? SB_LTX_FAILED : failure[0] ? failure : err ? err : sqlite3_errmsg(sb_dbs[idx]);
     sb_puts(&b, "{\"ok\":false,\"error\":");
     sb_putjson_text(&b, m, strlen(m));
@@ -3372,6 +3472,8 @@ static char* sb_sql_script(const char* path, const char* sql) {
 static char* sb_sql_error(sqlite3* db, const char* message, int code, int skip) {
   sb_buf e = { 0, 0, 0 };
   const char* m = message ? message : sqlite3_errmsg(db);
+  // The replication failure (code 10) is our own message and is reported where it happens; SQLite's last errno means nothing for it.
+  if (!message || strcmp(message, SB_LTX_FAILED)) sb_diag_failure(db, code >= 0 ? code : sqlite3_extended_errcode(db));
   sb_puts(&e, "{\"ok\":false,\"error\":");
   sb_putjson_text(&e, m, strlen(m));
   char tail[64];
@@ -3708,6 +3810,7 @@ static char* sb_sql_backup(const char* src_path, const char* dest_path) {
   sqlite3* chk = 0;
   int ok = 0;
   if (sqlite3_open(dest_path, &chk) == 0 && chk) {
+    sqlite3_exec(chk, "PRAGMA temp_store=MEMORY", 0, 0, 0);
     sqlite3_stmt* cs = 0;
     if (sqlite3_prepare_v2(chk, "PRAGMA integrity_check", -1, &cs, 0) == 0 && cs) {
       if (sqlite3_step(cs) == SB_SQLITE_ROW) {

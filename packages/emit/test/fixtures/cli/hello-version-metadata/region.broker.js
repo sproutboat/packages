@@ -4,7 +4,7 @@ globalThis.__sbAppName = "hello";
 const env = {"GREETING":"Hello"};
 globalThis.env = env;
 __sbSetEnv(env);
-env["VERSION"] = {"id":"04bfdc275fc620755","tag":"hello","timestamp":"2026-11-26T12:49:50.778Z"};
+env["VERSION"] = {"id":"04bfdc275fc620755","tag":"hello","timestamp":"2026-11-27T09:57:52.749Z"};
 __sbInstallFetch();
 const __sbUserHandlers = (() => {
 // src/index.ts

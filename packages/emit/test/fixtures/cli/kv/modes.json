@@ -6,16 +6,16 @@
     "preludeSha256": "164b49acbeaee26b3fc176f8583eba23d406b36eca2c2b556b6f71e6cc2b91a5"
   },
   "standalone": {
-    "sha256": "28faec6a00b98d2a7a5129abc561cfe43ba7ccb7dc5533dfdffcfe97d05dd534",
-    "canonicalSha256": "28faec6a00b98d2a7a5129abc561cfe43ba7ccb7dc5533dfdffcfe97d05dd534",
-    "bytes": 862519,
-    "preludeSha256": "e1884d00afc9b93a765e93cd67ae18a4ccb8c2d63e16f203ceeab14f24b666f8"
+    "sha256": "d2bed956c3f739b696ad76346019b4daf78e4fdf7a6bec3b618043f8b9a7e0ab",
+    "canonicalSha256": "d2bed956c3f739b696ad76346019b4daf78e4fdf7a6bec3b618043f8b9a7e0ab",
+    "bytes": 869030,
+    "preludeSha256": "7bcbd9ca03c92ef2f0eac2b91003dd5a5278881716b2444e8323112bbd7b5cd3"
   },
   "cloud": {
-    "sha256": "28faec6a00b98d2a7a5129abc561cfe43ba7ccb7dc5533dfdffcfe97d05dd534",
-    "canonicalSha256": "28faec6a00b98d2a7a5129abc561cfe43ba7ccb7dc5533dfdffcfe97d05dd534",
-    "bytes": 862519,
-    "preludeSha256": "e1884d00afc9b93a765e93cd67ae18a4ccb8c2d63e16f203ceeab14f24b666f8",
+    "sha256": "d2bed956c3f739b696ad76346019b4daf78e4fdf7a6bec3b618043f8b9a7e0ab",
+    "canonicalSha256": "d2bed956c3f739b696ad76346019b4daf78e4fdf7a6bec3b618043f8b9a7e0ab",
+    "bytes": 869030,
+    "preludeSha256": "7bcbd9ca03c92ef2f0eac2b91003dd5a5278881716b2444e8323112bbd7b5cd3",
     "assetBake": false
   }
 }
