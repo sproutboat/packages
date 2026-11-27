@@ -5404,13 +5404,72 @@ static void sb_sha256_init(sb_sha256_ctx* c) {
   c->h[0]=0x6a09e667;c->h[1]=0xbb67ae85;c->h[2]=0x3c6ef372;c->h[3]=0xa54ff53a;
   c->h[4]=0x510e527f;c->h[5]=0x9b05688c;c->h[6]=0x1f83d9ab;c->h[7]=0x5be0cd19;c->len=0;c->n=0;
 }
+// x86-64 SHA extensions (Intel SHA-NI, AMD since Zen): about 6 to 8 times the reference block above. Chosen at
+// run time with CPUID, so the same module still runs on a CPU without them; every other target keeps the
+// reference block. SB_SHA256_NO_NI (the test build) forces the reference block everywhere.
+#if defined(__x86_64__) && !defined(SB_SHA256_NO_NI)
+#include <immintrin.h>
+#include <cpuid.h>
+static int sb_has_sha_ni(void) {
+  static int v = -1;
+  if (v < 0) {
+    unsigned int a = 0, b = 0, c = 0, d = 0;
+    v = 0;
+    if (__get_cpuid_max(0, 0) >= 7 && __get_cpuid(1, &a, &b, &c, &d) && ((c >> 9) & 1) && ((c >> 19) & 1)) {
+      __cpuid_count(7, 0, a, b, c, d);
+      v = (int)((b >> 29) & 1);
+    }
+  }
+  return v;
+}
+#define SB_NI_GRP(i) { if ((i) >= 4) { __m128i t = _mm_sha256msg1_epu32(m[(i) & 3], m[((i) + 1) & 3]); t = _mm_add_epi32(t, _mm_alignr_epi8(m[((i) + 3) & 3], m[((i) + 2) & 3], 4)); m[(i) & 3] = _mm_sha256msg2_epu32(t, m[((i) + 3) & 3]); } msg = _mm_add_epi32(m[(i) & 3], _mm_loadu_si128((const __m128i*)&sb_k256[4 * (i)])); st1 = _mm_sha256rnds2_epu32(st1, st0, msg); msg = _mm_shuffle_epi32(msg, 0x0E); st0 = _mm_sha256rnds2_epu32(st0, st1, msg); }
+__attribute__((target("sha,sse4.1,ssse3")))
+static void sb_sha256_blocks_ni(uint32_t* h, const unsigned char* p, size_t nblocks) {
+  const __m128i mask = _mm_set_epi64x(0x0c0d0e0f08090a0bLL, 0x0405060700010203LL);
+  __m128i tmp = _mm_loadu_si128((const __m128i*)&h[0]);
+  __m128i st1 = _mm_loadu_si128((const __m128i*)&h[4]);
+  tmp = _mm_shuffle_epi32(tmp, 0xB1);
+  st1 = _mm_shuffle_epi32(st1, 0x1B);
+  __m128i st0 = _mm_alignr_epi8(tmp, st1, 8);
+  st1 = _mm_blend_epi16(st1, tmp, 0xF0);
+  while (nblocks--) {
+    const __m128i abef = st0, cdgh = st1;
+    __m128i m[4], msg;
+    m[0] = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i*)(p + 0)), mask);
+    m[1] = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i*)(p + 16)), mask);
+    m[2] = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i*)(p + 32)), mask);
+    m[3] = _mm_shuffle_epi8(_mm_loadu_si128((const __m128i*)(p + 48)), mask);
+    SB_NI_GRP(0) SB_NI_GRP(1) SB_NI_GRP(2) SB_NI_GRP(3) SB_NI_GRP(4) SB_NI_GRP(5) SB_NI_GRP(6) SB_NI_GRP(7)
+    SB_NI_GRP(8) SB_NI_GRP(9) SB_NI_GRP(10) SB_NI_GRP(11) SB_NI_GRP(12) SB_NI_GRP(13) SB_NI_GRP(14) SB_NI_GRP(15)
+    st0 = _mm_add_epi32(st0, abef);
+    st1 = _mm_add_epi32(st1, cdgh);
+    p += 64;
+  }
+  tmp = _mm_shuffle_epi32(st0, 0x1B);
+  st1 = _mm_shuffle_epi32(st1, 0xB1);
+  st0 = _mm_blend_epi16(tmp, st1, 0xF0);
+  st1 = _mm_alignr_epi8(st1, tmp, 8);
+  _mm_storeu_si128((__m128i*)&h[0], st0);
+  _mm_storeu_si128((__m128i*)&h[4], st1);
+}
+#endif
+// nblocks whole 64-byte blocks straight from the caller's memory (no copy through the context buffer).
+static void sb_sha256_blocks(sb_sha256_ctx* c, const unsigned char* p, size_t nblocks) {
+#if defined(__x86_64__) && !defined(SB_SHA256_NO_NI)
+  if (sb_has_sha_ni()) { sb_sha256_blocks_ni(c->h, p, nblocks); return; }
+#endif
+  for (; nblocks; nblocks--, p += 64) sb_sha256_block(c, p);
+}
 static void sb_sha256_update(sb_sha256_ctx* c, const unsigned char* p, size_t n) {
   c->len += n;
-  while (n) {
+  if (c->n) {
     size_t k = 64 - c->n; if (k > n) k = n;
     memcpy(c->buf + c->n, p, k); c->n += k; p += k; n -= k;
-    if (c->n == 64) { sb_sha256_block(c, c->buf); c->n = 0; }
+    if (c->n < 64) return;
+    sb_sha256_blocks(c, c->buf, 1); c->n = 0;
   }
+  if (n >= 64) { size_t nb = n / 64; sb_sha256_blocks(c, p, nb); p += nb * 64; n -= nb * 64; }
+  if (n) { memcpy(c->buf, p, n); c->n = n; }
 }
 static void sb_sha256_final(sb_sha256_ctx* c, unsigned char out[32]) {
   uint64_t bits = c->len * 8;

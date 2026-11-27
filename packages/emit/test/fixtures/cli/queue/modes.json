@@ -1,21 +1,21 @@
 {
   "broker": {
-    "sha256": "c15dbfd197b5264e8f24f26041f0c63050e1a5e5695fc51fa557bd97c8654735",
-    "canonicalSha256": "c15dbfd197b5264e8f24f26041f0c63050e1a5e5695fc51fa557bd97c8654735",
-    "bytes": 573744,
-    "preludeSha256": "164b49acbeaee26b3fc176f8583eba23d406b36eca2c2b556b6f71e6cc2b91a5"
+    "sha256": "35a4c608df62dc38e4de88e5d4a7eed56656f74603888311f86288ceac0d9931",
+    "canonicalSha256": "35a4c608df62dc38e4de88e5d4a7eed56656f74603888311f86288ceac0d9931",
+    "bytes": 576915,
+    "preludeSha256": "af0c6d02eab5fde87d087ee5351394002895226416eca3857767bedf351b3409"
   },
   "standalone": {
-    "sha256": "8a959ed21fdd5fb8137fb5d4b7e081dadada0842db4e4bae374a89072cfcc4ed",
-    "canonicalSha256": "8a959ed21fdd5fb8137fb5d4b7e081dadada0842db4e4bae374a89072cfcc4ed",
-    "bytes": 874627,
-    "preludeSha256": "e4ef3a2ea1ed9b8ea9e43962cbc185cea1343d418deb9418a9d51c53f71a8f37"
+    "sha256": "cfd2b3895d210bad06d2d55cc671cf7a3fe3bc9e582f0f441bc5013d23a23457",
+    "canonicalSha256": "cfd2b3895d210bad06d2d55cc671cf7a3fe3bc9e582f0f441bc5013d23a23457",
+    "bytes": 877798,
+    "preludeSha256": "c419d5bd6acfa942aa2459bcf94757488591122714b7bd83cc9be615a7920762"
   },
   "cloud": {
-    "sha256": "8a959ed21fdd5fb8137fb5d4b7e081dadada0842db4e4bae374a89072cfcc4ed",
-    "canonicalSha256": "8a959ed21fdd5fb8137fb5d4b7e081dadada0842db4e4bae374a89072cfcc4ed",
-    "bytes": 874627,
-    "preludeSha256": "e4ef3a2ea1ed9b8ea9e43962cbc185cea1343d418deb9418a9d51c53f71a8f37",
+    "sha256": "cfd2b3895d210bad06d2d55cc671cf7a3fe3bc9e582f0f441bc5013d23a23457",
+    "canonicalSha256": "cfd2b3895d210bad06d2d55cc671cf7a3fe3bc9e582f0f441bc5013d23a23457",
+    "bytes": 877798,
+    "preludeSha256": "c419d5bd6acfa942aa2459bcf94757488591122714b7bd83cc9be615a7920762",
     "assetBake": false
   }
 }
