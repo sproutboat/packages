@@ -176,6 +176,7 @@ test("a specifier built at run time cannot link node:ffi: it compiles, and no ff
     "import { createRequire } from 'node:module'; const r = createRequire('/x.js'); globalThis.sbD = () => r('node:ffi');",
   ]) {
     const r = await compile(worker);
+    expect(r.ok, worker + "\n" + r.log).toBe(true);
     expect(r.ffiLinked, worker + "\n" + r.log).toBe(false);
   }
 }, 120_000);
